@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>Console admin</title><link rel="stylesheet" href="/static/style.css"></head>
+<body><main>
+<h1>Console admin</h1>
+<section id="lg" class="card hide">
+<label for="u">Identifiant</label><input id="u" autocomplete="username">
+<label for="pw">Mot de passe</label><input id="pw" type="password" autocomplete="current-password">
+<button class="pri" id="go">Se connecter</button><p class="err" id="lge"></p></section>
+
+<div id="app" class="hide">
+<nav><button data-t="f" class="on">Fiches</button><button data-t="l">Lire une page</button><button data-t="e">Fiche</button><button data-t="d">Médecins</button><button data-t="a">Abonnés</button><button data-t="j">Tâches</button></nav>
+<p class="err" id="er"></p>
+<p><a class="btn" href="/admin/comptes">Médecins et abonnés</a></p>
+
+<section id="f"><div class="chips" id="flt"></div><div id="list"></div></section>
+
+<section id="l" class="hide"><div class="card">
+<label for="img">Photo d'une page du livre</label><input id="img" type="file" accept="image/*" capture="environment">
+<button class="pri" id="lire">Lire avec Claude</button>
+<p class="sub" id="ls">La lecture prend environ 10 à 20 secondes. Vous relisez chaque fiche avant de l'enregistrer.</p></div>
+<div id="props"></div></section>
+
+<section id="e" class="hide"><div class="card">
+<input type="hidden" id="fid"><input type="hidden" id="fimg"><img id="fpv" class="pg hide" alt="Page lue">
+<label for="n">Maladie ou mal</label><input id="n">
+<div class="row"><div><label for="pg">Page</label><input id="pg"></div><div><label for="src">Livre</label><select id="src"><option>Petit Docteur</option><option>Gros volume</option></select></div></div>
+<div class="row"><div><label for="c">Catégorie</label><select id="c"></select></div><div><label for="r">Risque</label><select id="r"><option value="s">Faible</option><option value="p">Prudence</option><option value="u">Urgence</option></select></div></div>
+<label for="sy">Symptômes</label><textarea id="sy" rows="2"></textarea>
+<label for="re">Remèdes du livre (résumés)</label><textarea id="re" rows="3"></textarea>
+<label for="al">Signe d'alerte</label><input id="al">
+<button class="pri" id="save">Enregistrer</button> <button id="clr">Vider</button>
+<p class="sub">Une fiche enregistrée ou modifiée repasse « à valider ».</p></div></section>
+
+<section id="d" class="hide"><p class="sub">Vérifiez le numéro d'ordre avant d'approuver. Seuls les médecins approuvés sont visibles et joignables.</p><div id="docs"></div></section>
+<section id="a" class="hide"><div class="card" id="abo"></div><div class="card"><h4 style="margin-top:0">Derniers paiements</h4><div id="pays"></div></div></section>
+
+<section id="j" class="hide"><div class="card"><h4 style="margin-top:0">Tâches du jour</h4><div id="tasks"></div>
+<div class="row"><input id="nt" placeholder="Nouvelle tâche" aria-label="Nouvelle tâche"><button id="at" style="flex:0 0 auto;height:44px;margin-top:4px">Ajouter</button></div></div>
+<div class="card"><h4 style="margin-top:0">Journal d'aujourd'hui</h4><div id="log"></div></div>
+<button id="out">Se déconnecter</button></section>
+</div></main>
+<script>
+var $=function(i){return document.getElementById(i)},CATS=[],fiches=[],flt="all",RL={s:"Faible",p:"Prudence",u:"Urgence"};
+function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
+function api(p,o){o=o||{};o.credentials="same-origin";return fetch(p,o).then(function(r){if(r.status===401&&p!=="/api/login"){showLogin();throw new Error("Connexion requise")}
+return r.json().catch(function(){return{}}).then(function(d){if(!r.ok)throw new Error(d.detail||"Erreur "+r.status);return d})})}
+function jpost(p,m,b){return api(p,{method:m,headers:{"Content-Type":"application/json"},body:JSON.stringify(b)})}
+function err(e){$("er").textContent=e&&e.message||"";}
+function showLogin(){$("app").className="hide";$("lg").className="card"}
+function tab(t){["f","l","e","d","a","j"].forEach(function(s){$(s).className=s===t?"":"hide"});document.querySelectorAll("nav button").forEach(function(b){b.className=b.getAttribute("data-t")===t?"on":""});err();if(t==="j")loadT();if(t==="f")loadF();if(t==="d")loadD();if(t==="a")loadA()}
+document.querySelector("nav").onclick=function(e){var t=e.target.getAttribute("data-t");if(t)tab(t)};
+$("go").onclick=function(){jpost("/api/login","POST",{user:$("u").value,password:$("pw").value}).then(function(){$("pw").value="";start()}).catch(function(e){$("lge").textContent=e.message})};
+$("out").onclick=function(){jpost("/api/logout","POST",{}).then(showLogin)};
+function start(){api("/api/config").then(function(c){CATS=c.cats;$("c").innerHTML=CATS.map(function(x,i){return'<option value="'+i+'">'+esc(x)+'</option>'}).join("")});
+return api("/api/admin/fiches").then(function(l){fiches=l;$("lg").className="hide";$("app").className="";tab("f")}).catch(function(){})}
+function loadF(){api("/api/admin/fiches").then(function(l){fiches=l;drawF()}).catch(err)}
+function drawF(){var n=fiches.filter(function(f){return!f.valide}).length;
+$("flt").innerHTML=[["all","Toutes ("+fiches.length+")"],["todo","À valider ("+n+")"],["ok","Validées ("+(fiches.length-n)+")"]].map(function(x){return'<button data-f="'+x[0]+'" class="'+(flt===x[0]?"on":"")+'">'+x[1]+'</button>'}).join("");
+$("list").innerHTML=fiches.filter(function(f){return flt==="all"||(flt==="todo"?!f.valide:f.valide)}).map(function(f){
+return'<div class="card"><details><summary><span>'+esc(f.nom)+'<br><span class="meta">'+esc(CATS[f.cat])+(f.page?" · p. "+esc(f.page):"")+" · "+esc(f.source)+'</span></span><span><span class="b '+f.risque+'">'+RL[f.risque]+'</span><span class="b '+(f.valide?"s":"v")+'">'+(f.valide?"Validée":"À valider")+'</span></span></summary>'+
+'<h4>Symptômes</h4><p>'+esc(f.symptomes)+'</p><h4>Remède du livre</h4><p>'+esc(f.remedes)+'</p>'+(f.alerte?'<div class="al"><b>Alerte :</b> '+esc(f.alerte)+'</div>':'')+(f.valide?'<p class="meta">Relue par '+esc(f.valide_par)+'</p>':'')+(f.image?'<img class="pg" alt="Page du livre" src="/api/admin/image/'+esc(f.image)+'">':'')+
+'<div class="row"><button data-a="v" data-i="'+f.id+'">'+(f.valide?"Retirer":"Valider")+'</button><button data-a="m" data-i="'+f.id+'">Modifier</button><button data-a="d" data-i="'+f.id+'">Supprimer</button></div></details></div>'}).join("")||'<p class="sub">Aucune fiche.</p>'}
+$("flt").onclick=function(e){var f=e.target.getAttribute("data-f");if(f){flt=f;drawF()}};
+$("list").onclick=function(e){var a=e.target.getAttribute("data-a"),id=+e.target.getAttribute("data-i");if(!a)return;var f=fiches.filter(function(x){return x.id===id})[0];
+if(a==="v"){var m=f.valide?"":prompt("Nom du médecin qui a relu cette fiche :");if(!f.valide&&!m)return;jpost("/api/admin/fiches/"+id+"/valider","POST",{valide:!f.valide,medecin:m||""}).then(loadF).catch(err)}
+if(a==="d"&&confirm("Supprimer la fiche « "+f.nom+" » ?"))api("/api/admin/fiches/"+id,{method:"DELETE"}).then(loadF).catch(err);
+if(a==="m")fill(f,f.id)};
+function fill(f,id){$("fid").value=id||"";$("fimg").value=f.image||"";$("n").value=f.nom||"";$("pg").value=f.page||"";$("src").value=f.source||"Petit Docteur";$("c").value=f.cat;$("r").value=f.risque;$("sy").value=f.symptomes||"";$("re").value=f.remedes||"";$("al").value=f.alerte||"";
+$("fpv").className=f.image?"pg":"pg hide";if(f.image)$("fpv").src="/api/admin/image/"+f.image;tab("e")}
+$("clr").onclick=function(){fill({cat:5,risque:"p"},"")};
+$("save").onclick=function(){var b={nom:$("n").value.trim(),page:$("pg").value,source:$("src").value,cat:+$("c").value,risque:$("r").value,symptomes:$("sy").value,remedes:$("re").value,alerte:$("al").value,image:$("fimg").value};
+if(!b.nom){err({message:"Indiquez le nom de la maladie."});return}var id=$("fid").value;
+jpost(id?"/api/admin/fiches/"+id:"/api/admin/fiches",id?"PUT":"POST",b).then(function(){fill({cat:5,risque:"p"},"");tab("f")}).catch(err)};
+var props=[],pimg="";
+$("lire").onclick=function(){var f=$("img").files[0];if(!f){err({message:"Choisissez d'abord une photo."});return}err();$("lire").disabled=true;$("ls").textContent="Lecture en cours…";
+var fd=new FormData();fd.append("file",f);api("/api/admin/lire",{method:"POST",body:fd}).then(function(d){props=d.fiches;pimg=d.image;$("ls").textContent=props.length+" fiche(s) trouvée(s). Vérifiez chacune avant de l'enregistrer.";
+$("props").innerHTML=props.map(function(p,i){return'<div class="card"><b>'+esc(p.nom)+'</b><br><span class="meta">'+esc(CATS[p.cat])+(p.page?" · p. "+esc(p.page):"")+'</span><p>'+esc(p.remedes)+'</p><button class="pri" data-p="'+i+'">Vérifier et enregistrer</button></div>'}).join("")}).catch(function(e){$("ls").textContent="";err(e)}).then(function(){$("lire").disabled=false})};
+$("props").onclick=function(e){var i=e.target.getAttribute("data-p");if(i===null)return;var p=props[+i];p.image=pimg;p.source=$("src").value;fill(p,"")};
+
+function loadD(){api("/api/admin/medecins").then(function(l){$("docs").innerHTML=l.length?l.map(function(d){var lab={attente:"En attente",approuve:"Approuvé",refuse:"Refusé"}[d.statut];
+return'<div class="card"><b>'+esc(d.nom)+'</b> <span class="b '+(d.statut==="approuve"?"s":d.statut==="refuse"?"u":"v")+'">'+lab+'</span><br><span class="meta">'+esc(d.specialite)+' · N° ordre : <b>'+esc(d.numero_ordre)+'</b> · '+esc(d.telephone)+(d.ville?' · '+esc(d.ville):'')+'</span>'+
+(d.has_photo?'<br><img class="pg" style="max-width:120px" alt="Photo" src="/api/admin/photo/'+d.id+'">':'')+
+'<div class="row"><button data-m="approuve" data-i="'+d.id+'">Approuver</button><button data-m="refuse" data-i="'+d.id+'">Refuser</button><button data-m="attente" data-i="'+d.id+'">Remettre en attente</button></div></div>'}).join(""):'<p class="sub">Aucun médecin inscrit.</p>'}).catch(err)}
+$("docs").onclick=function(e){var m=e.target.getAttribute("data-m");if(!m)return;jpost("/api/admin/medecins/"+e.target.getAttribute("data-i")+"/statut","POST",{statut:m}).then(loadD).catch(err)};
+function loadA(){api("/api/admin/abonnes").then(function(r){$("abo").innerHTML='<b>'+r.actifs+'</b> abonné(s) Premium actif(s) sur '+r.comptes+' compte(s) patient<br><span class="meta">'+r.paiements+' paiement(s) reçu(s) · '+r.total+' '+esc(r.devise)+'</span>';
+$("pays").innerHTML=r.derniers.length?r.derniers.map(function(p){return'<div class="log"><span class="meta">'+esc(new Date(p.created_ms).toLocaleString("fr-FR"))+'</span> '+esc(p.nom)+' · '+p.amount+' · '+esc(p.method)+' · <b>'+esc(p.status)+'</b></div>'}).join(""):'<p class="sub">Aucun paiement.</p>'}).catch(err)}
+function loadT(){api("/api/admin/taches").then(function(l){$("tasks").innerHTML=l.map(function(t){return'<label style="display:flex;gap:8px;align-items:center;font-weight:400"><input type="checkbox" style="width:auto;margin:0" data-k="'+t.id+'"'+(t.fait?" checked":"")+'> '+esc(t.texte)+'</label>'}).join("")}).catch(err);
+api("/api/admin/journal").then(function(l){$("log").innerHTML=l.length?l.map(function(x){return'<div class="log"><span class="meta">'+esc(x.ts.slice(11,16))+'</span> '+esc(x.texte)+'</div>'}).join(""):'<p class="sub">Rien aujourd\'hui.</p>'}).catch(err)}
+$("tasks").onchange=function(e){var k=e.target.getAttribute("data-k");if(k)jpost("/api/admin/taches/"+k+"/fait","POST",{fait:e.target.checked}).then(loadT).catch(err)};
+$("at").onclick=function(){var t=$("nt").value.trim();if(t)jpost("/api/admin/taches","POST",{texte:t}).then(function(){$("nt").value="";loadT()}).catch(err)};
+start().then(function(){}).catch(function(){});api("/api/admin/fiches").catch(showLogin);
+</script></body></html>

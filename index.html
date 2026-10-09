@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Petit Docteur</title>
+<meta name="description" content="Conseils de santé relus par un médecin et consultations en ligne.">
+<link rel="stylesheet" href="/static/style.css"></head>
+<body>
+<header class="top"><a href="/" class="logo">Petit Docteur</a><nav id="nav" aria-label="Navigation"></nav></header>
+<main id="view"></main>
+
+<div id="incoming" class="overlay hide" role="dialog" aria-label="Appel entrant">
+  <div class="box"><p class="big" id="inc-t">Appel entrant</p>
+  <div class="row"><button class="pri" id="inc-ok">Répondre</button><button id="inc-no">Refuser</button></div></div>
+</div>
+
+<div id="callbox" class="overlay hide" role="dialog" aria-label="Appel vidéo">
+  <div class="callwrap">
+    <video id="rv" autoplay playsinline></video>
+    <video id="lv" autoplay playsinline muted></video>
+    <p id="callmsg" class="callmsg">Appel en cours…</p>
+    <div class="callbar">
+      <button id="c-mic" aria-pressed="false">Micro</button>
+      <button id="c-cam" aria-pressed="false">Caméra</button>
+      <button id="c-end" class="danger">Raccrocher</button>
+    </div>
+    <a id="c-alt" class="callalt" target="_blank" rel="noopener" href="#">Problème de connexion ? Ouvrir l'appel de secours</a>
+  </div>
+</div>
+<script src="/static/app.js"></script>
+</body></html>

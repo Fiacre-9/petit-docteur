@@ -1,0 +1,72 @@
+:root{--bg:#F3F8F6;--card:#fff;--ink:#14232B;--mute:#52666E;--teal:#0F4C5C;--mint:#D8EDE6;--sun:#F2B134;--line:#CFE0DA;--red:#FCE8E3;--redi:#8A2A14;--amb:#FFF3D6;--ambi:#6B4A00;--grn:#DDF2E3;--grni:#17582B;--btn:#fff}
+@media(prefers-color-scheme:dark){:root{--bg:#0E1A1F;--card:#16262D;--ink:#E8F1EE;--mute:#9DB3AB;--teal:#7CC5D6;--mint:#1D3A40;--line:#2A4249;--red:#3A1D16;--redi:#FFB4A0;--amb:#3A2F12;--ambi:#F5D58A;--grn:#173823;--grni:#9BE0B0;--btn:#0E1A1F}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+main{max-width:680px;margin:0 auto;padding:16px 14px 48px}h1{font-size:1.45rem;margin:4px 0;color:var(--teal)}h4{margin:10px 0 2px;font-size:.9rem}p{margin:0 0 8px}
+.sub,.meta{color:var(--mute);font-size:.88rem}.note{background:var(--amb);color:var(--ambi);border-radius:10px;padding:9px 12px;font-size:.88rem;margin:10px 0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:10px 0}
+button,.btn{font:inherit;font-weight:600;border:1px solid var(--teal);border-radius:10px;padding:10px 12px;cursor:pointer;background:var(--card);color:var(--teal);text-decoration:none;display:inline-block}
+button.on,button.pri,a.btn{background:var(--teal);color:var(--btn)}button:disabled{opacity:.5}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible{outline:3px solid var(--sun);outline-offset:2px}
+input,select,textarea{font:inherit;width:100%;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);margin:4px 0 10px}label{font-weight:600;font-size:.9rem}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.chips button{padding:6px 11px;font-size:.85rem;font-weight:500}
+details summary{cursor:pointer;font-weight:700;list-style:none;display:flex;justify-content:space-between;gap:8px;align-items:center}details summary::-webkit-details-marker{display:none}
+.b{display:inline-block;border-radius:6px;padding:1px 8px;font-size:.75rem;font-weight:600;margin-left:4px}.s{background:var(--grn);color:var(--grni)}.p{background:var(--amb);color:var(--ambi)}.u{background:var(--red);color:var(--redi)}.v{background:var(--mint);color:var(--teal)}
+.al{background:var(--red);color:var(--redi);border-radius:8px;padding:6px 10px;margin:8px 0;font-size:.9rem}.hide{display:none}.row{display:flex;gap:8px}.row>*{flex:1}
+nav{display:flex;gap:6px;margin:12px 0;position:sticky;top:0;background:var(--bg);padding:6px 0;z-index:2}nav button{flex:1}img.pg{max-width:100%;border-radius:8px;margin:8px 0}
+.log{font-size:.88rem;border-bottom:1px solid var(--line);padding:5px 0}.err{color:var(--redi);font-weight:600}
+/* ---- comptes, médecins, consultation ---- */
+header.top{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}header.top h1{margin:4px 0}
+.tabs{display:flex;gap:6px;margin:12px 0;overflow-x:auto}.tabs button{flex:1 0 auto;white-space:nowrap}
+.grow{flex:1;min-width:0}.row0{display:flex;gap:10px;align-items:center}
+.av{border-radius:50%;object-fit:cover;flex:0 0 auto;background:var(--mint)}.av.ph{display:inline-block;text-align:center;color:var(--teal);font-weight:700}
+.conv,.doc{display:flex;gap:12px;align-items:center;cursor:pointer}.doc{cursor:default;align-items:flex-start}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#1f9d55;vertical-align:middle}
+.lock{background:var(--amb);color:var(--ambi);border-radius:10px;padding:10px 12px;margin:8px 0;font-size:.9rem}
+.lock button{margin-top:6px}
+.cvhead{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.msgs{height:min(55vh,420px);overflow-y:auto;border:1px solid var(--line);border-radius:10px;padding:8px;background:var(--bg);margin-bottom:8px}
+.msg{max-width:82%;padding:7px 10px;border-radius:12px;margin:5px 0;white-space:pre-wrap;word-wrap:break-word}
+.msg .meta{display:block;font-size:.72rem;opacity:.7;margin-top:2px}
+.msg.me{margin-left:auto;background:var(--teal);color:var(--btn)}.msg.you{background:var(--card);border:1px solid var(--line)}
+.ring{position:fixed;left:12px;right:12px;top:12px;z-index:30;background:var(--card);border:2px solid var(--teal);border-radius:14px;padding:14px;box-shadow:0 8px 30px rgba(0,0,0,.3);max-width:420px;margin:0 auto;font-weight:600}
+.callbox{position:fixed;inset:0;z-index:40;background:#05090b;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.callbox #cvRemote{width:100%;height:100%;object-fit:contain;background:#05090b}
+.callbox #cvLocal{position:absolute;right:12px;top:12px;width:28vw;max-width:150px;border-radius:10px;border:2px solid #fff;background:#222;transform:scaleX(-1)}
+.callst{position:absolute;left:0;right:0;top:12px;text-align:center;color:#fff;font-weight:600;text-shadow:0 1px 4px #000;padding:0 170px 0 12px}
+.callbtn{position:absolute;bottom:calc(20px + env(safe-area-inset-bottom));display:flex;gap:10px}
+.callbtn button{min-width:96px}.callbtn button.pri{background:#c62828;border-color:#c62828;color:#fff}
+.pay label.opt{display:flex;gap:8px;align-items:center;font-weight:500}.pay label.opt input{width:auto;margin:0}
+.price{font-size:1.6rem;font-weight:800;color:var(--teal)}
+ul.ok{padding-left:20px;margin:6px 0}ul.ok li{margin:3px 0}
+.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}.kpi .card{margin:0;text-align:center}.kpi b{display:block;font-size:1.3rem;color:var(--teal)}
+table{width:100%;border-collapse:collapse;font-size:.88rem}td,th{border-bottom:1px solid var(--line);padding:6px 4px;text-align:left;vertical-align:top}
+/* ---- v2 : comptes, médecins, messagerie, appel ---- */
+.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;justify-content:space-between;padding:10px 14px;max-width:none}
+.top .logo{font-weight:800;color:var(--teal);text-decoration:none;font-size:1.1rem}
+.top nav{display:flex;gap:4px;flex-wrap:wrap;margin:0;position:static;padding:0;background:none}
+.top nav a{color:var(--ink);text-decoration:none;padding:6px 10px;border-radius:8px;font-size:.92rem;font-weight:600}
+.top nav a.on{background:var(--mint);color:var(--teal)}
+a{color:var(--teal)}
+.dot{display:inline-block;min-width:18px;padding:0 5px;border-radius:9px;background:var(--sun);color:#14232B;font-size:.72rem;font-weight:700;text-align:center}
+.ok{color:var(--grni);font-weight:600}
+.ok-n{background:var(--grn);color:var(--grni)}.bad-n{background:var(--red);color:var(--redi)}
+.prem{border-color:var(--teal);background:var(--mint)}.big{font-size:1.5rem;font-weight:800;margin:0 0 6px;color:var(--teal)}
+.ticks{margin:6px 0 0;padding-left:20px}.lock{background:var(--mint);color:var(--teal);border-radius:8px;padding:6px 10px;margin:8px 0;font-size:.9rem}
+.tabs{display:flex;gap:6px;margin:10px 0}.tabs button{flex:1}.tabs button.on{background:var(--teal);color:var(--btn)}
+.chk{display:flex;gap:8px;align-items:flex-start;font-weight:400;margin:8px 0}.chk input{width:auto;margin:4px 0 0}
+.av{position:relative;display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:50%;background:var(--mint);color:var(--teal);font-weight:700;flex:0 0 auto;overflow:hidden}
+.av.lg{width:56px;height:56px;font-size:1.1rem}.av img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.doc{display:flex;gap:12px;align-items:flex-start;text-decoration:none;color:inherit}.grow{flex:1;min-width:0}.row-s{display:flex;gap:12px;align-items:center}
+.doc button{margin-top:6px}
+.chat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px;height:52vh;overflow-y:auto;display:flex;flex-direction:column;gap:6px;margin:10px 0}
+.bub{max-width:80%;padding:7px 11px;border-radius:14px;font-size:.95rem;word-wrap:break-word}.bub .t{display:block;font-size:.7rem;opacity:.7;text-align:right}
+.bub.me{align-self:flex-end;background:var(--teal);color:var(--btn)}.bub.you{align-self:flex-start;background:var(--mint);color:var(--ink)}
+.overlay{position:fixed;inset:0;background:rgba(10,20,25,.82);z-index:20;display:flex;align-items:center;justify-content:center;padding:16px}.overlay.hide{display:none}
+.overlay .box{background:var(--card);border-radius:14px;padding:22px;text-align:center;min-width:260px}
+.callwrap{position:relative;width:100%;max-width:760px;height:100%;max-height:92vh;display:flex;flex-direction:column;align-items:center;justify-content:center}
+#rv{width:100%;height:100%;object-fit:cover;background:#000;border-radius:12px}
+#lv{position:absolute;right:10px;top:10px;width:28%;max-width:180px;border-radius:10px;background:#222;border:2px solid #fff;transform:scaleX(-1)}
+.callmsg{position:absolute;top:44%;left:0;right:0;text-align:center;color:#fff;font-weight:600;padding:0 20px}
+.callbar{position:absolute;bottom:48px;left:0;right:0;display:flex;gap:10px;justify-content:center}
+.callbar button.danger{background:#C0392B;border-color:#C0392B;color:#fff}
+.callalt{position:absolute;bottom:14px;left:0;right:0;text-align:center;color:#cfe;font-size:.82rem}
