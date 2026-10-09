@@ -677,6 +677,11 @@ const sendPage = (name, cache) => (req, res) => {
 app.get("/", sendPage("index.html", "no-cache"));
 app.get("/medecin", sendPage("index.html", "no-cache"));
 app.get("/admin", sendPage("admin.html", "no-store"));
+// PWA : manifeste, service worker (à la racine pour couvrir tout le site) et icônes
+app.get("/manifest.webmanifest", (req, res) => { res.type("application/manifest+json"); sendPage("manifest.webmanifest", "no-cache")(req, res); });
+app.get("/sw.js", (req, res) => { res.type("application/javascript").set("Service-Worker-Allowed", "/"); sendPage("sw.js", "no-cache")(req, res); });
+for (const icon of ["icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png"])
+  app.get("/" + icon, (req, res) => { res.type("image/png"); sendPage(icon, "public, max-age=86400")(req, res); });
 app.get("/static/:f", (req, res) => {
   if (!["app.js", "style.css"].includes(req.params.f)) return res.sendStatus(404);
   sendPage(req.params.f, "public, max-age=300")(req, res);

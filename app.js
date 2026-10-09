@@ -383,3 +383,17 @@ Promise.all([api("/api/config").then(function (c) { cfg = c; }).catch(function (
   if (new URLSearchParams(location.search).get("ref")) location.hash = "#/premium";
   route();
 });
+
+// ---------- application installable (PWA) ----------
+var installEvt = null;
+var standalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+var iosSafari = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
+if ("serviceWorker" in navigator) window.addEventListener("load", function () { navigator.serviceWorker.register("/sw.js").catch(function () {}); });
+window.addEventListener("beforeinstallprompt", function (e) { e.preventDefault(); installEvt = e; if (!standalone) $("install").className = "pri"; });
+window.addEventListener("appinstalled", function () { installEvt = null; $("install").className = "pri hide"; });
+if (iosSafari && !standalone) $("install").className = "pri";
+$("install").onclick = function () {
+  if (installEvt) { installEvt.prompt(); installEvt.userChoice.finally(function () { installEvt = null; $("install").className = "pri hide"; }); }
+  else if (iosSafari) alert("Sur iPhone : touchez le bouton Partager de Safari, puis « Sur l'écran d'accueil ».");
+  else alert("Ouvrez le menu de votre navigateur (⋮) puis choisissez « Installer l'application » ou « Ajouter à l'écran d'accueil ».");
+};

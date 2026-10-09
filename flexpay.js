@@ -5,7 +5,7 @@ const CARD_URL = process.env.FLEXPAY_CARD_URL || "https://cardpayment.flexpay.cd
 const CHECK_URL = process.env.FLEXPAY_CHECK_URL || "https://apicheck.flexpaie.com/api/rest/v1/check/";
 
 const MERCHANT = () => process.env.FLEXPAY_MERCHANT || "MARCO_SERVICE";
-const TOKEN = () => process.env.FLEXPAY_TOKEN || "";
+const TOKEN = () => (process.env.FLEXPAY_TOKEN || process.env.FLEPAY_TOKEN || process.env.FLEXPAY_API || "").trim();
 const BEARER = () => (TOKEN().startsWith("Bearer ") ? TOKEN() : "Bearer " + TOKEN());
 const configured = () => TOKEN().length > 10;
 
