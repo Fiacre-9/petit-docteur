@@ -11,7 +11,7 @@ const crypto = require("crypto");
 const express = require("express");
 const multer = require("multer");
 const { DatabaseSync } = require("node:sqlite");
-const flexpay = require("./lib/flexpay");
+const flexpay = require(fs.existsSync(path.join(__dirname, "lib", "flexpay.js")) ? "./lib/flexpay" : "./flexpay");
 let sharp = null;
 try { sharp = require("sharp"); } catch (e) { console.warn("sharp indisponible : images enregistrées sans redimensionnement"); }
 
@@ -666,12 +666,21 @@ app.get("/api/admin/journal", needAdmin, (req, res) =>
   res.json(db.prepare("SELECT ts,texte FROM journal WHERE ts>=? ORDER BY id DESC LIMIT 200").all(today())));
 
 // ---------- pages ----------
-const STATIC = path.join(__dirname, "static");
-const home = (req, res) => { res.set("Cache-Control", "no-cache"); res.sendFile(path.join(STATIC, "index.html")); };
-app.get("/", home);
-app.get("/medecin", home);
-app.get("/admin", (req, res) => { res.set("Cache-Control", "no-store"); res.sendFile(path.join(STATIC, "admin.html")); });
-app.use("/static", express.static(STATIC, { maxAge: "5m" }));
+// Les fichiers peuvent être dans static/ ou à la racine du dépôt : on les cherche aux deux endroits.
+// Liste blanche : jamais le dossier entier, pour ne pas exposer server.js ni seed.json.
+const findFile = (name) => [path.join(__dirname, "static", name), path.join(__dirname, name)].find((p) => fs.existsSync(p));
+const sendPage = (name, cache) => (req, res) => {
+  const f = findFile(name);
+  if (!f) return res.sendStatus(404);
+  res.set("Cache-Control", cache); res.sendFile(f);
+};
+app.get("/", sendPage("index.html", "no-cache"));
+app.get("/medecin", sendPage("index.html", "no-cache"));
+app.get("/admin", sendPage("admin.html", "no-store"));
+app.get("/static/:f", (req, res) => {
+  if (!["app.js", "style.css"].includes(req.params.f)) return res.sendStatus(404);
+  sendPage(req.params.f, "public, max-age=300")(req, res);
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log("Petit Docteur sur le port " + PORT));
