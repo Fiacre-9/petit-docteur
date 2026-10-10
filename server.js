@@ -12,6 +12,9 @@ const express = require("express");
 const multer = require("multer");
 const { DatabaseSync } = require("node:sqlite");
 const flexpay = require(fs.existsSync(path.join(__dirname, "lib", "flexpay.js")) ? "./lib/flexpay" : "./flexpay");
+const remedes = require(fs.existsSync(path.join(__dirname, "lib", "remedes.js")) ? "./lib/remedes" : "./remedes");
+let webpush = null;
+try { webpush = require("web-push"); } catch (e) { console.warn("web-push absent : notifications désactivées"); }
 let sharp = null;
 try { sharp = require("sharp"); } catch (e) { console.warn("sharp indisponible : images enregistrées sans redimensionnement"); }
 
@@ -19,9 +22,9 @@ const SECRET = process.env.SECRET_KEY || "";
 const ADMIN_USER = process.env.ADMIN_USER || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
 const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5-5";
-const WHATSAPP = process.env.WHATSAPP_NUMBER || "";
+const WHATSAPP = String(process.env.WHATSAPP_NUMBER || "243861375050").replace(/\D/g, "");
 const COOKIE_SECURE = (process.env.COOKIE_SECURE || "1") === "1";
-const DATA_DIR = process.env.DATA_DIR || path.join(os.homedir(), "petit-docteur-data");
+const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(os.homedir(), "petit-docteur-data"));
 const IMG_DIR = path.join(DATA_DIR, "images");
 const AVATAR_DIR = path.join(DATA_DIR, "avatars");
 const BASE_URL = (process.env.BASE_URL || "").replace(/\/$/, "");
@@ -45,6 +48,8 @@ const DEFAULT_TASKS = ["Relire les fiches à valider", "Lire et enregistrer les 
 
 fs.mkdirSync(IMG_DIR, { recursive: true });
 fs.mkdirSync(AVATAR_DIR, { recursive: true });
+const REMEDE_DIR = path.join(DATA_DIR, "remedes");
+fs.mkdirSync(REMEDE_DIR, { recursive: true });
 const db = new DatabaseSync(path.join(DATA_DIR, "petit_docteur.db"));
 
 // heure de Kinshasa (UTC+1)
@@ -80,7 +85,17 @@ CREATE TABLE IF NOT EXISTS orders(ref TEXT PRIMARY KEY, user_id INTEGER NOT NULL
 for (const col of ["cabinet TEXT DEFAULT ''", "langues TEXT DEFAULT ''", "experience INTEGER DEFAULT 0"]) {
   try { db.exec("ALTER TABLE users ADD COLUMN " + col); } catch (e) { /* déjà présente */ }
 }
+for (const col of ["causes TEXT DEFAULT ''", "consequences TEXT DEFAULT ''"]) {
+  try { db.exec("ALTER TABLE fiches ADD COLUMN " + col); } catch (e) { /* déjà présente */ }
+}
 db.exec(`
+CREATE TABLE IF NOT EXISTS fiche_images(id INTEGER PRIMARY KEY AUTOINCREMENT, fiche_id INTEGER NOT NULL, terme TEXT DEFAULT '',
+  titre TEXT DEFAULT '', source_url TEXT DEFAULT '', auteur TEXT DEFAULT '', licence TEXT DEFAULT '', licence_url TEXT DEFAULT '',
+  fichier TEXT NOT NULL, statut TEXT NOT NULL DEFAULT 'propose', created_at TEXT);
+CREATE INDEX IF NOT EXISTS idx_fimg ON fiche_images(fiche_id, statut);
+CREATE TABLE IF NOT EXISTS push_subs(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, endpoint TEXT NOT NULL UNIQUE,
+  p256dh TEXT NOT NULL, auth TEXT NOT NULL, lang TEXT DEFAULT 'fr', created_at TEXT);
+CREATE INDEX IF NOT EXISTS idx_push_user ON push_subs(user_id);
 CREATE TABLE IF NOT EXISTS connexions(id INTEGER PRIMARY KEY AUTOINCREMENT, de_id INTEGER NOT NULL, vers_id INTEGER NOT NULL,
   statut TEXT NOT NULL DEFAULT 'attente', created_at TEXT, UNIQUE(de_id, vers_id));
 CREATE INDEX IF NOT EXISTS idx_cx_vers ON connexions(vers_id, statut);
@@ -236,6 +251,29 @@ app.post("/api/user/login", rateLimit(10, 10 * 60 * 1000), (req, res) => {
 app.post("/api/user/logout", (req, res) => { res.clearCookie("pd_user"); res.json({ ok: true }); });
 app.get("/api/me", optUser, (req, res) => res.json(req.user ? publicUser(req.user) : null));
 
+// suppression du compte (exigée par les boutiques d'applications) : tout ce qui concerne la personne est effacé,
+// sauf les reçus de paiement, conservés sans lien avec un nom
+app.delete("/api/me", needUser, rateLimit(5, 10 * 60e3), (req, res) => {
+  const u = req.user;
+  if (!checkPassword(String((req.body || {}).password || ""), u.pass)) return res.status(403).json({ detail: "Mot de passe incorrect." });
+  db.exec("BEGIN");
+  try {
+    for (const c of db.prepare("SELECT id FROM conversations WHERE patient_id=? OR doctor_id=?").all(u.id, u.id)) {
+      db.prepare("DELETE FROM signals WHERE call_id IN (SELECT id FROM calls WHERE conv_id=?)").run(c.id);
+      db.prepare("DELETE FROM calls WHERE conv_id=?").run(c.id);
+      db.prepare("DELETE FROM messages WHERE conv_id=?").run(c.id);
+      db.prepare("DELETE FROM conversations WHERE id=?").run(c.id);
+    }
+    db.prepare("DELETE FROM connexions WHERE de_id=? OR vers_id=?").run(u.id, u.id);
+    db.prepare("DELETE FROM push_subs WHERE user_id=?").run(u.id);
+    db.prepare("DELETE FROM users WHERE id=?").run(u.id);
+    db.exec("COMMIT");
+  } catch (e) { db.exec("ROLLBACK"); return res.status(500).json({ detail: "Suppression impossible, réessayez." }); }
+  if (u.photo) fs.rmSync(path.join(AVATAR_DIR, path.basename(u.photo)), { force: true });
+  log(`Compte supprimé à la demande de la personne : ${u.nom}`);
+  res.clearCookie("pd_user");
+  res.json({ ok: true });
+});
 app.put("/api/me/profile", needUser, needPremium, (req, res) => {
   const b = req.body || {}, u = req.user;
   const nom = clip(b.nom, 120);
@@ -361,6 +399,7 @@ app.post("/api/confreres/:id/connect", needUser, needDoctor, rateLimit(40, 60e3)
   const l = linkBetween(me, t.id);
   if (!l) {
     db.prepare("INSERT INTO connexions(de_id,vers_id,statut,created_at) VALUES(?,?,'attente',?)").run(me, t.id, now());
+    notify(t.id, "req", req.user.nom, "/#/demandes");
     return res.json({ etat: "envoyee" });
   }
   // il m'avait déjà écrit : la demande croisée vaut acceptation
@@ -373,6 +412,7 @@ app.post("/api/confreres/:id/connect", needUser, needDoctor, rateLimit(40, 60e3)
 app.post("/api/confreres/:id/accept", needUser, needDoctor, (req, res) => {
   const r = db.prepare("UPDATE connexions SET statut='accepte' WHERE de_id=? AND vers_id=? AND statut='attente'").run(parseInt(req.params.id, 10), req.user.id);
   if (!r.changes) return res.status(404).json({ detail: "Demande introuvable." });
+  notify(parseInt(req.params.id, 10), "acc", req.user.nom, "/#/reseau");
   res.json({ etat: "connecte" });
 });
 // annuler une demande envoyée, refuser une demande reçue ou retirer un confrère
@@ -422,20 +462,35 @@ app.get("/api/config", optUser, (req, res) => res.json({
 const cut = (s, n) => (s.length > n ? s.slice(0, n).replace(/\s+\S*$/, "") + "…" : s);
 app.get("/api/fiches", optUser, (req, res) => {
   const full = !!req.user && isPremium(req.user);
-  let sql = "SELECT id,nom,page,cat,risque,symptomes,remedes,alerte FROM fiches WHERE valide=1";
+  let sql = "SELECT id,nom,page,cat,risque,causes,symptomes,consequences,remedes,alerte FROM fiches WHERE valide=1";
   const args = [];
   const cat = parseInt(req.query.cat, 10);
   if (Number.isInteger(cat) && cat >= 0) { sql += " AND cat=?"; args.push(cat); }
   const q = String(req.query.q || "").trim();
   if (q) {
-    // sans abonnement, on cherche seulement dans le nom et les symptômes
-    sql += full ? " AND (nom LIKE ? OR symptomes LIKE ? OR remedes LIKE ?)" : " AND (nom LIKE ? OR symptomes LIKE ?)";
-    args.push(`%${q}%`, `%${q}%`); if (full) args.push(`%${q}%`);
+    // sans abonnement, on cherche seulement dans le nom, les causes et les symptômes
+    const cols = full ? ["nom", "causes", "symptomes", "consequences", "remedes"] : ["nom", "causes", "symptomes"];
+    sql += " AND (" + cols.map((c) => c + " LIKE ?").join(" OR ") + ")";
+    for (const c of cols) args.push(`%${q}%`);
   }
   const rows = db.prepare(sql + " ORDER BY nom").all(...args);
+  const imgs = new Map();
+  for (const i of db.prepare("SELECT id,fiche_id,terme,auteur,licence,licence_url,source_url FROM fiche_images WHERE statut='ok' ORDER BY id").all()) {
+    if (!imgs.has(i.fiche_id)) imgs.set(i.fiche_id, []);
+    imgs.get(i.fiche_id).push({ id: i.id, terme: i.terme, auteur: i.auteur, licence: i.licence, licence_url: i.licence_url, source: i.source_url });
+  }
+  const withImg = (r) => ({ ...r, images: imgs.get(r.id) || [] });
   // le signe d'alerte reste toujours visible : c'est une information de sécurité
-  res.json(full ? rows.map((r) => ({ ...r, locked: false })) :
-    rows.map((r) => ({ ...r, symptomes: cut(r.symptomes, 80), remedes: cut(r.remedes, 45), locked: true })));
+  res.json(full ? rows.map((r) => withImg({ ...r, locked: false })) :
+    rows.map((r) => withImg({ ...r, causes: cut(r.causes, 80), symptomes: cut(r.symptomes, 80), consequences: cut(r.consequences, 45), remedes: cut(r.remedes, 45), locked: true })));
+});
+// image d'un remède : publique une fois validée par l'administrateur
+app.get("/api/remede-img/:id", (req, res) => {
+  const i = db.prepare("SELECT fichier,statut FROM fiche_images WHERE id=?").get(parseInt(req.params.id, 10));
+  const adm = readToken("adm", cookies(req).pd_session || "") === ADMIN_USER;
+  if (!i || (i.statut !== "ok" && !adm)) return res.sendStatus(404);
+  res.set("Cache-Control", i.statut === "ok" ? "public, max-age=86400" : "private, no-store").type("image/jpeg")
+    .sendFile(path.join(REMEDE_DIR, path.basename(i.fichier)));
 });
 
 // ---------- paiement Premium (FlexPaie) ----------
@@ -500,6 +555,53 @@ app.all("/api/flexpay/callback", async (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- notifications push (même application fermée) ----------
+let vapid = null;
+if (webpush) {
+  const vf = path.join(DATA_DIR, "vapid.json");
+  try { vapid = JSON.parse(fs.readFileSync(vf, "utf8")); }
+  catch (e) { vapid = webpush.generateVAPIDKeys(); fs.writeFileSync(vf, JSON.stringify(vapid), { mode: 0o600 }); }
+  webpush.setVapidDetails(BASE_URL || "https://sante.mireb.online", vapid.publicKey, vapid.privateKey);
+}
+const PUSH_T = {
+  fr: { msg: "Nouveau message de {n}", call: "Appel vidéo de {n}", req: "{n} souhaite se connecter avec vous", acc: "{n} a accepté votre demande", ok: "Votre compte médecin est validé" },
+  en: { msg: "New message from {n}", call: "Video call from {n}", req: "{n} wants to connect with you", acc: "{n} accepted your request", ok: "Your doctor account is approved" },
+  sw: { msg: "Ujumbe mpya kutoka kwa {n}", call: "Simu ya video kutoka kwa {n}", req: "{n} anataka kuunganishwa nawe", acc: "{n} amekubali ombi lako", ok: "Akaunti yako ya daktari imethibitishwa" },
+  ln: { msg: "Nsango ya sika uta {n}", call: "Libiangi ya vidéo uta {n}", req: "{n} azali kolinga kosangana na yo", acc: "{n} andimi ebongiseli na yo", ok: "Kompte na yo ya monganga endimami" },
+  kg: { msg: "Nsangu ya mpa ya {n}", call: "Kubikisa ya vidéo ya {n}", req: "{n} kezola kuyika ngeye", acc: "{n} kondimi ndombolo na nge", ok: "Kompte ya nge ya ngangu ya nganga kondimama" },
+  lua: { msg: "Mukanda mupiya wa {n}", call: "Dibikila dia vidéo dia {n}", req: "{n} udi musue kukuenzeja", acc: "{n} wakuambula dîyi diebe", ok: "Kompte yebe ya munganga mimane" },
+};
+const PUSH_HOST = /^https:\/\/([a-z0-9-]+\.)*(googleapis\.com|mozilla\.com|mozaws\.net|push\.apple\.com|notify\.windows\.com)\//i;
+function notify(uid, key, n, url, urgent) {
+  if (!webpush || !uid) return;
+  let subs = [];
+  try { subs = db.prepare("SELECT * FROM push_subs WHERE user_id=?").all(uid); } catch (e) { return; }
+  for (const s of subs) {
+    const L = PUSH_T[s.lang] || PUSH_T.fr;
+    const payload = JSON.stringify({ title: "Petit Docteur", body: (L[key] || PUSH_T.fr[key]).replace("{n}", n || ""), url, tag: key + ":" + url, urgent: !!urgent });
+    webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { TTL: urgent ? 45 : 86400, urgency: urgent ? "high" : "normal" })
+      .catch((err) => { if (err && (err.statusCode === 404 || err.statusCode === 410)) db.prepare("DELETE FROM push_subs WHERE id=?").run(s.id); });
+  }
+}
+app.get("/api/push/key", (req, res) => res.json({ key: vapid ? vapid.publicKey : "" }));
+app.post("/api/push/subscribe", needUser, rateLimit(20, 60e3), (req, res) => {
+  if (!webpush) return res.status(503).json({ detail: "Les notifications ne sont pas disponibles sur ce serveur." });
+  const b = req.body || {}, k = b.keys || {};
+  const endpoint = String(b.endpoint || "");
+  if (endpoint.length > 600 || !PUSH_HOST.test(endpoint) || !k.p256dh || !k.auth || String(k.p256dh).length > 200 || String(k.auth).length > 100)
+    return res.status(400).json({ detail: "Abonnement invalide." });
+  const lang = ["fr", "en", "ln", "sw", "kg", "lua"].includes(b.lang) ? b.lang : "fr";
+  db.prepare("INSERT INTO push_subs(user_id,endpoint,p256dh,auth,lang,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET user_id=excluded.user_id,p256dh=excluded.p256dh,auth=excluded.auth,lang=excluded.lang")
+    .run(req.user.id, endpoint, String(k.p256dh), String(k.auth), lang, now());
+  // au plus 5 appareils par compte : on garde les plus récents
+  db.prepare("DELETE FROM push_subs WHERE user_id=? AND id NOT IN (SELECT id FROM push_subs WHERE user_id=? ORDER BY id DESC LIMIT 5)").run(req.user.id, req.user.id);
+  res.json({ ok: true });
+});
+app.post("/api/push/unsubscribe", needUser, (req, res) => {
+  db.prepare("DELETE FROM push_subs WHERE endpoint=? AND user_id=?").run(String((req.body || {}).endpoint || ""), req.user.id);
+  res.json({ ok: true });
+});
+
 // ---------- messagerie ----------
 const convOf = (id, uid) => {
   const c = db.prepare("SELECT * FROM conversations WHERE id=? AND (patient_id=? OR doctor_id=?)").get(id, uid, uid);
@@ -545,6 +647,7 @@ app.post("/api/conversations/:id/messages", needUser, needPremium, rateLimit(40,
   const texte = clip((req.body || {}).texte, 2000);
   if (!texte) return res.status(422).json({ detail: "Message vide." });
   const r = db.prepare("INSERT INTO messages(conv_id,from_id,texte,ts) VALUES(?,?,?,?)").run(c.id, req.user.id, texte, now());
+  notify(c.patient_id === req.user.id ? c.doctor_id : c.patient_id, "msg", req.user.nom, "/#/chat/" + c.id);
   res.json({ id: Number(r.lastInsertRowid) });
 });
 
@@ -575,6 +678,7 @@ app.post("/api/conversations/:id/call", needUser, needPremium, rateLimit(12, 60e
   if (live) return res.json(callOut(live));
   const r = db.prepare("INSERT INTO calls(conv_id,started_by,state,room,created_ms,updated_ms) VALUES(?,?,'ringing',?,?,?)")
     .run(c.id, req.user.id, "PetitDocteur" + crypto.randomBytes(8).toString("hex"), Date.now(), Date.now());
+  notify(c.patient_id === req.user.id ? c.doctor_id : c.patient_id, "call", req.user.nom, "/#/chat/" + c.id, true);
   res.json(callOut(db.prepare("SELECT * FROM calls WHERE id=?").get(Number(r.lastInsertRowid))));
 });
 app.get("/api/calls/:id", needUser, (req, res) => {
@@ -640,14 +744,14 @@ function cleanFiche(b) {
   if (!nom) return null;
   const cat = Number.isInteger(b.cat) && b.cat >= 0 && b.cat < CATS.length ? b.cat : 5;
   return { nom, source: s(b.source, 100), page: s(b.page, 30), cat, risque: ["s", "p", "u"].includes(b.risque) ? b.risque : "p",
-    symptomes: s(b.symptomes, 1500), remedes: s(b.remedes, 2500), alerte: s(b.alerte, 800), image: path.basename(s(b.image, 80)) };
+    causes: s(b.causes, 1500), symptomes: s(b.symptomes, 1500), consequences: s(b.consequences, 1500), remedes: s(b.remedes, 2500), alerte: s(b.alerte, 800), image: path.basename(s(b.image, 80)) };
 }
 app.get("/api/admin/fiches", needAdmin, (req, res) => res.json(db.prepare("SELECT * FROM fiches ORDER BY id").all()));
 app.post("/api/admin/fiches", needAdmin, (req, res) => {
   const f = cleanFiche(req.body || {});
   if (!f) return res.status(422).json({ detail: "Le nom est obligatoire." });
-  const r = db.prepare("INSERT INTO fiches(nom,source,page,cat,risque,symptomes,remedes,alerte,image,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
-    .run(f.nom, f.source, f.page, f.cat, f.risque, f.symptomes, f.remedes, f.alerte, f.image, now(), now());
+  const r = db.prepare("INSERT INTO fiches(nom,source,page,cat,risque,causes,symptomes,consequences,remedes,alerte,image,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(f.nom, f.source, f.page, f.cat, f.risque, f.causes, f.symptomes, f.consequences, f.remedes, f.alerte, f.image, now(), now());
   log(`Fiche ajoutée : ${f.nom}`);
   res.json({ id: Number(r.lastInsertRowid) });
 });
@@ -655,8 +759,8 @@ app.put("/api/admin/fiches/:id", needAdmin, (req, res) => {
   const f = cleanFiche(req.body || {});
   if (!f) return res.status(422).json({ detail: "Le nom est obligatoire." });
   // une fiche modifiée redevient « à valider »
-  const r = db.prepare("UPDATE fiches SET nom=?,source=?,page=?,cat=?,risque=?,symptomes=?,remedes=?,alerte=?,image=?,valide=0,valide_par='',updated_at=? WHERE id=?")
-    .run(f.nom, f.source, f.page, f.cat, f.risque, f.symptomes, f.remedes, f.alerte, f.image, now(), req.params.id);
+  const r = db.prepare("UPDATE fiches SET nom=?,source=?,page=?,cat=?,risque=?,causes=?,symptomes=?,consequences=?,remedes=?,alerte=?,image=?,valide=0,valide_par='',updated_at=? WHERE id=?")
+    .run(f.nom, f.source, f.page, f.cat, f.risque, f.causes, f.symptomes, f.consequences, f.remedes, f.alerte, f.image, now(), req.params.id);
   if (!r.changes) return res.status(404).json({ detail: "Fiche introuvable" });
   log(`Fiche modifiée (à revalider) : ${f.nom}`);
   res.json({ ok: true });
@@ -671,9 +775,72 @@ app.post("/api/admin/fiches/:id/valider", needAdmin, (req, res) => {
   log((valide ? `Fiche validée par ${med} : ` : "Validation retirée : ") + row.nom);
   res.json({ ok: true });
 });
+// ---- images des remèdes : recherche (Wikimedia Commons), validation, envoi manuel ----
+const dropImage = (i) => { fs.rmSync(path.join(REMEDE_DIR, path.basename(i.fichier)), { force: true }); db.prepare("DELETE FROM fiche_images WHERE id=?").run(i.id); };
+async function saveImage(ficheId, meta, buf, statut) {
+  const r = db.prepare("INSERT INTO fiche_images(fiche_id,terme,titre,source_url,auteur,licence,licence_url,fichier,statut,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
+    .run(ficheId, meta.terme || "", meta.titre || "", meta.source_url || "", meta.auteur || "", meta.licence || "", meta.licence_url || "", "tmp", statut, now());
+  const id = Number(r.lastInsertRowid), name = `${id}.jpg`;
+  try {
+    const out = sharp ? await sharp(buf).rotate().resize(800, 800, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer() : buf;
+    fs.writeFileSync(path.join(REMEDE_DIR, name), out);
+    db.prepare("UPDATE fiche_images SET fichier=? WHERE id=?").run(name, id);
+    return id;
+  } catch (e) { db.prepare("DELETE FROM fiche_images WHERE id=?").run(id); throw e; }
+}
+app.get("/api/admin/fiches/:id/images", needAdmin, (req, res) =>
+  res.json(db.prepare("SELECT id,terme,titre,source_url,auteur,licence,licence_url,statut FROM fiche_images WHERE fiche_id=? ORDER BY id").all(req.params.id)));
+app.post("/api/admin/fiches/:id/images/chercher", needAdmin, rateLimit(12, 60e3), async (req, res) => {
+  const f = db.prepare("SELECT id,nom,remedes FROM fiches WHERE id=?").get(req.params.id);
+  if (!f) return res.status(404).json({ detail: "Fiche introuvable" });
+  try {
+    let termes = Array.isArray((req.body || {}).termes) ? req.body.termes.map((t) => clip(t, 80)).filter(Boolean).slice(0, 4) : [];
+    let par = "vous";
+    if (!termes.length) {
+      if (!process.env.ANTHROPIC_API_KEY) return res.status(400).json({ detail: "Écrivez un ou deux termes à chercher (ex : aloe vera), ou configurez ANTHROPIC_API_KEY pour que Claude les propose." });
+      termes = await remedes.suggestTerms(f, process.env.ANTHROPIC_API_KEY, MODEL); par = "claude";
+      if (!termes.length) return res.json({ ajoutees: 0, termes, par, detail: "Claude n'a trouvé aucun ingrédient concret à illustrer dans cette fiche." });
+    }
+    const deja = new Set(db.prepare("SELECT source_url FROM fiche_images WHERE fiche_id=?").all(f.id).map((r) => r.source_url));
+    let n = 0;
+    for (const terme of termes) {
+      let found = [];
+      try { found = await remedes.searchCommons(terme, 3); } catch (e) { continue; }
+      for (const c of found) {
+        if (deja.has(c.page)) continue;
+        try { await saveImage(f.id, { terme, titre: c.titre, source_url: c.page, auteur: c.auteur, licence: c.licence, licence_url: c.licence_url }, await remedes.download(c.thumb), "propose"); deja.add(c.page); n++; } catch (e) { /* image suivante */ }
+      }
+    }
+    log(`Images proposées pour « ${f.nom} » : ${n}`);
+    res.json({ ajoutees: n, termes, par });
+  } catch (e) { res.status(502).json({ detail: "Recherche d'images impossible pour le moment : " + String(e.message || e).slice(0, 120) }); }
+});
+app.post("/api/admin/fiches/:id/images/envoyer", needAdmin, (req, res) => {
+  const f = db.prepare("SELECT id,nom FROM fiches WHERE id=?").get(req.params.id);
+  if (!f) return res.status(404).json({ detail: "Fiche introuvable" });
+  avatarUpload.single("file")(req, res, async (err) => {
+    if (err || !req.file) return res.status(400).json({ detail: "Image trop lourde (8 Mo maximum) ou illisible." });
+    try {
+      await saveImage(f.id, { terme: clip(req.body.terme, 80), titre: "Photo de l'éditeur", auteur: "Petit Docteur", licence: "Photo de l'éditeur" }, req.file.buffer, "ok");
+      log(`Image ajoutée à « ${f.nom} »`); res.json({ ok: true });
+    } catch (e) { res.status(400).json({ detail: "Ce fichier n'est pas une image lisible." }); }
+  });
+});
+app.post("/api/admin/images/:iid/statut", needAdmin, (req, res) => {
+  const st = (req.body || {}).statut;
+  if (!["ok", "refuse", "propose"].includes(st)) return res.status(400).json({ detail: "Statut invalide." });
+  db.prepare("UPDATE fiche_images SET statut=? WHERE id=?").run(st, parseInt(req.params.iid, 10));
+  res.json({ ok: true });
+});
+app.delete("/api/admin/images/:iid", needAdmin, (req, res) => {
+  const i = db.prepare("SELECT id,fichier FROM fiche_images WHERE id=?").get(parseInt(req.params.iid, 10));
+  if (i) dropImage(i);
+  res.json({ ok: true });
+});
 app.delete("/api/admin/fiches/:id", needAdmin, (req, res) => {
   const row = db.prepare("SELECT nom FROM fiches WHERE id=?").get(req.params.id);
   if (!row) return res.status(404).json({ detail: "Fiche introuvable" });
+  for (const i of db.prepare("SELECT id,fichier FROM fiche_images WHERE fiche_id=?").all(req.params.id)) dropImage(i);
   db.prepare("DELETE FROM fiches WHERE id=?").run(req.params.id);
   log(`Fiche supprimée : ${row.nom}`);
   res.json({ ok: true });
@@ -693,6 +860,7 @@ app.post("/api/admin/medecins/:id/statut", needAdmin, (req, res) => {
   const u = db.prepare("SELECT nom FROM users WHERE id=? AND role='medecin'").get(req.params.id);
   if (!u) return res.status(404).json({ detail: "Médecin introuvable" });
   db.prepare("UPDATE users SET statut=? WHERE id=?").run(statut, req.params.id);
+  if (statut === "approuve") notify(parseInt(req.params.id, 10), "ok", "", "/#/");
   log(`Médecin ${statut === "approuve" ? "approuvé" : statut === "refuse" ? "refusé" : "remis en attente"} : ${u.nom}`);
   res.json({ ok: true });
 });
@@ -702,7 +870,7 @@ app.get("/api/admin/abonnes", needAdmin, (req, res) => {
     actifs: db.prepare("SELECT COUNT(*) n FROM users WHERE role='patient' AND premium_until>?").get(Date.now()).n,
     comptes: db.prepare("SELECT COUNT(*) n FROM users WHERE role='patient'").get().n,
     paiements: paid.n, total: paid.total, devise: PREMIUM_CURRENCY,
-    derniers: db.prepare("SELECT o.ref,o.method,o.status,o.amount,o.created_ms,u.nom FROM orders o JOIN users u ON u.id=o.user_id ORDER BY o.created_ms DESC LIMIT 50").all() });
+    derniers: db.prepare("SELECT o.ref,o.method,o.status,o.amount,o.created_ms,COALESCE(u.nom,'(compte supprimé)') nom FROM orders o LEFT JOIN users u ON u.id=o.user_id ORDER BY o.created_ms DESC LIMIT 50").all() });
 });
 app.get("/api/admin/photo/:id", needAdmin, (req, res) => {
   const t = db.prepare("SELECT photo FROM users WHERE id=? AND role='medecin'").get(req.params.id);
@@ -717,7 +885,9 @@ Chaque élément a ces clés :
 - "page" : numéro de page imprimé, ou "" si illisible
 - "cat" : entier parmi ${JSON.stringify(Object.assign({}, CATS))}
 - "risque" : "s" (faible), "p" (prudence) ou "u" (maladie sérieuse : voir un médecin)
+- "causes" : causes du mal selon le livre (une ou deux phrases), ou "" si le livre n'en parle pas
 - "symptomes" : symptômes décrits, en une ou deux phrases
+- "consequences" : conséquences ou complications si le mal n'est pas soigné, ou "" si absent
 - "remedes" : remèdes proposés par le livre, résumés
 - "alerte" : quand il faut consulter ou signe de danger ; si le livre propose un remède douteux ou dangereux, dis-le ici
 Règles : reformule avec tes propres mots (40 mots maximum par champ, aucune phrase recopiée) ;
@@ -809,13 +979,22 @@ const sendPage = (name, cache) => (req, res) => {
 app.get("/", sendPage("index.html", "no-cache"));
 app.get("/medecin", sendPage("index.html", "no-cache"));
 app.get("/admin", sendPage("admin.html", "no-store"));
+app.get("/confidentialite", sendPage("confidentialite.html", "no-cache"));
+app.get("/conditions", sendPage("conditions.html", "no-cache"));
+app.get("/suppression", (req, res) => res.redirect(302, "/confidentialite#suppression"));
+// lien Android (application Play Store) : empreintes de la clé de signature, à ajouter dans ANDROID_SHA256 (séparées par des virgules)
+app.get("/.well-known/assetlinks.json", (req, res) => {
+  const fp = String(process.env.ANDROID_SHA256 || "").split(",").map((x) => x.trim()).filter(Boolean);
+  res.json(fp.length ? [{ relation: ["delegate_permission/common.handle_all_urls"],
+    target: { namespace: "android_app", package_name: process.env.ANDROID_PACKAGE || "online.mireb.sante", sha256_cert_fingerprints: fp } }] : []);
+});
 // PWA : manifeste, service worker (à la racine pour couvrir tout le site) et icônes
 app.get("/manifest.webmanifest", (req, res) => { res.type("application/manifest+json"); sendPage("manifest.webmanifest", "no-cache")(req, res); });
 app.get("/sw.js", (req, res) => { res.type("application/javascript").set("Service-Worker-Allowed", "/"); sendPage("sw.js", "no-cache")(req, res); });
-for (const icon of ["icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png"])
+for (const icon of ["icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png", "shot-1.png", "shot-2.png", "shot-3.png"])
   app.get("/" + icon, (req, res) => { res.type("image/png"); sendPage(icon, "public, max-age=86400")(req, res); });
 app.get("/static/:f", (req, res) => {
-  if (!["app.js", "style.css"].includes(req.params.f)) return res.sendStatus(404);
+  if (!["app.js", "style.css", "i18n.js"].includes(req.params.f)) return res.sendStatus(404);
   sendPage(req.params.f, "public, max-age=300")(req, res);
 });
 

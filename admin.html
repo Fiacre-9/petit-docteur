@@ -15,7 +15,7 @@
 <section id="f"><div class="chips" id="flt"></div><div id="list"></div></section>
 
 <section id="l" class="hide"><div class="card">
-<label for="img">Photo d'une page du livre</label><input id="img" type="file" accept="image/*" capture="environment">
+<label for="img">Photo d'une page du livre</label><input id="img" type="file" accept="image/*">
 <button class="pri" id="lire">Lire avec Claude</button>
 <p class="sub" id="ls">La lecture prend environ 10 à 20 secondes. Vous relisez chaque fiche avant de l'enregistrer.</p></div>
 <div id="props"></div></section>
@@ -25,7 +25,9 @@
 <label for="n">Maladie ou mal</label><input id="n">
 <div class="row"><div><label for="pg">Page</label><input id="pg"></div><div><label for="src">Livre</label><select id="src"><option>Petit Docteur</option><option>Gros volume</option></select></div></div>
 <div class="row"><div><label for="c">Catégorie</label><select id="c"></select></div><div><label for="r">Risque</label><select id="r"><option value="s">Faible</option><option value="p">Prudence</option><option value="u">Urgence</option></select></div></div>
+<label for="ca">Causes</label><textarea id="ca" rows="2"></textarea>
 <label for="sy">Symptômes</label><textarea id="sy" rows="2"></textarea>
+<label for="co">Conséquences</label><textarea id="co" rows="2"></textarea>
 <label for="re">Remèdes du livre (résumés)</label><textarea id="re" rows="3"></textarea>
 <label for="al">Signe d'alerte</label><input id="al">
 <button class="pri" id="save">Enregistrer</button> <button id="clr">Vider</button>
@@ -58,23 +60,36 @@ function drawF(){var n=fiches.filter(function(f){return!f.valide}).length;
 $("flt").innerHTML=[["all","Toutes ("+fiches.length+")"],["todo","À valider ("+n+")"],["ok","Validées ("+(fiches.length-n)+")"]].map(function(x){return'<button data-f="'+x[0]+'" class="'+(flt===x[0]?"on":"")+'">'+x[1]+'</button>'}).join("");
 $("list").innerHTML=fiches.filter(function(f){return flt==="all"||(flt==="todo"?!f.valide:f.valide)}).map(function(f){
 return'<div class="card"><details><summary><span>'+esc(f.nom)+'<br><span class="meta">'+esc(CATS[f.cat])+(f.page?" · p. "+esc(f.page):"")+" · "+esc(f.source)+'</span></span><span><span class="b '+f.risque+'">'+RL[f.risque]+'</span><span class="b '+(f.valide?"s":"v")+'">'+(f.valide?"Validée":"À valider")+'</span></span></summary>'+
-'<h4>Symptômes</h4><p>'+esc(f.symptomes)+'</p><h4>Remède du livre</h4><p>'+esc(f.remedes)+'</p>'+(f.alerte?'<div class="al"><b>Alerte :</b> '+esc(f.alerte)+'</div>':'')+(f.valide?'<p class="meta">Relue par '+esc(f.valide_par)+'</p>':'')+(f.image?'<img class="pg" alt="Page du livre" src="/api/admin/image/'+esc(f.image)+'">':'')+
-'<div class="row"><button data-a="v" data-i="'+f.id+'">'+(f.valide?"Retirer":"Valider")+'</button><button data-a="m" data-i="'+f.id+'">Modifier</button><button data-a="d" data-i="'+f.id+'">Supprimer</button></div></details></div>'}).join("")||'<p class="sub">Aucune fiche.</p>'}
+(f.causes?'<h4>Causes</h4><p>'+esc(f.causes)+'</p>':'')+'<h4>Symptômes</h4><p>'+esc(f.symptomes)+'</p>'+(f.consequences?'<h4>Conséquences</h4><p>'+esc(f.consequences)+'</p>':'')+'<h4>Remède du livre</h4><p>'+esc(f.remedes)+'</p>'+(f.alerte?'<div class="al"><b>Alerte :</b> '+esc(f.alerte)+'</div>':'')+(f.valide?'<p class="meta">Relue par '+esc(f.valide_par)+'</p>':'')+(f.image?'<img class="pg" alt="Page du livre" src="/api/admin/image/'+esc(f.image)+'">':'')+
+'<div class="row"><button data-a="v" data-i="'+f.id+'">'+(f.valide?"Retirer":"Valider")+'</button><button data-a="m" data-i="'+f.id+'">Modifier</button><button data-a="i" data-i="'+f.id+'">Images</button><button data-a="d" data-i="'+f.id+'">Supprimer</button></div><div class="imgs hide" id="im'+f.id+'"></div></details></div>'}).join("")||'<p class="sub">Aucune fiche.</p>'}
 $("flt").onclick=function(e){var f=e.target.getAttribute("data-f");if(f){flt=f;drawF()}};
 $("list").onclick=function(e){var a=e.target.getAttribute("data-a"),id=+e.target.getAttribute("data-i");if(!a)return;var f=fiches.filter(function(x){return x.id===id})[0];
 if(a==="v"){var m=f.valide?"":prompt("Nom du médecin qui a relu cette fiche :");if(!f.valide&&!m)return;jpost("/api/admin/fiches/"+id+"/valider","POST",{valide:!f.valide,medecin:m||""}).then(loadF).catch(err)}
 if(a==="d"&&confirm("Supprimer la fiche « "+f.nom+" » ?"))api("/api/admin/fiches/"+id,{method:"DELETE"}).then(loadF).catch(err);
-if(a==="m")fill(f,f.id)};
-function fill(f,id){$("fid").value=id||"";$("fimg").value=f.image||"";$("n").value=f.nom||"";$("pg").value=f.page||"";$("src").value=f.source||"Petit Docteur";$("c").value=f.cat;$("r").value=f.risque;$("sy").value=f.symptomes||"";$("re").value=f.remedes||"";$("al").value=f.alerte||"";
+if(a==="m")fill(f,f.id);
+if(a==="i")toggleImgs(id);
+if(a==="is")searchImgs(id);
+if(a==="ist"||a==="isr"||a==="isd"){var iid=+e.target.getAttribute("data-g");if(a==="isd"&&!confirm("Supprimer cette image ?"))return;(a==="isd"?api("/api/admin/images/"+iid,{method:"DELETE"}):jpost("/api/admin/images/"+iid+"/statut","POST",{statut:a==="ist"?"ok":"refuse"})).then(function(){drawImgs(id)}).catch(err)}};
+$("list").onchange=function(e){var id=+e.target.getAttribute("data-up");if(!id||!e.target.files[0])return;var fd=new FormData();fd.append("file",e.target.files[0]);fd.append("terme",($("tm"+id)||{}).value||"");err();api("/api/admin/fiches/"+id+"/images/envoyer",{method:"POST",body:fd}).then(function(){drawImgs(id)}).catch(err)};
+function toggleImgs(id){var el=$("im"+id);if(el.className==="imgs"){el.className="imgs hide";return}el.className="imgs";drawImgs(id)}
+function drawImgs(id){api("/api/admin/fiches/"+id+"/images").then(function(l){var st={ok:"Publiée",propose:"À valider",refuse:"Refusée"};
+$("im"+id).innerHTML='<h4>Images des remèdes</h4><p class="meta">Seules les images publiées sont visibles dans l\'application. Les images proposées viennent de Wikimedia Commons (licences libres) : l\'auteur et la licence s\'affichent sous la photo.</p>'+
+'<div class="row"><input id="tm'+id+'" placeholder="Termes à chercher, ex : aloe vera, gingembre (facultatif)"><button class="pri" data-a="is" data-i="'+id+'" style="flex:0 0 auto">Chercher des images</button></div>'+
+'<label>Ajouter une image depuis la galerie</label><input type="file" accept="image/*" data-up="'+id+'">'+
+'<p class="meta" id="imm'+id+'"></p><div class="gal">'+(l.length?l.map(function(i){return'<figure><img alt="" loading="lazy" src="/api/remede-img/'+i.id+'"><figcaption>'+esc(i.terme)+(i.auteur?' · '+esc(i.auteur):'')+(i.licence?' · '+esc(i.licence):'')+' · <b>'+st[i.statut]+'</b></figcaption>'+
+'<div class="row">'+(i.statut!=="ok"?'<button data-a="ist" data-i="'+id+'" data-g="'+i.id+'">Publier</button>':'')+(i.statut==="propose"?'<button data-a="isr" data-i="'+id+'" data-g="'+i.id+'">Refuser</button>':'')+'<button data-a="isd" data-i="'+id+'" data-g="'+i.id+'">Supprimer</button></div></figure>'}).join(""):'<p class="sub">Aucune image pour cette fiche.</p>')+'</div>'}).catch(err)}
+function searchImgs(id){var t=($("tm"+id).value||"").split(",").map(function(x){return x.trim()}).filter(Boolean);err();$("imm"+id).textContent="Recherche en cours…";
+jpost("/api/admin/fiches/"+id+"/images/chercher","POST",{termes:t}).then(function(r){drawImgs(id);setTimeout(function(){var m=$("imm"+id);if(m)m.textContent=r.detail||(r.ajoutees+" image(s) proposée(s)"+(r.termes&&r.termes.length?" pour : "+r.termes.join(", "):"")+(r.par==="claude"?" (termes trouvés par Claude)":"")+". Publiez celles qui illustrent bien le remède.")},300)}).catch(function(e){var m=$("imm"+id);if(m)m.textContent="";err(e)})}
+function fill(f,id){$("fid").value=id||"";$("fimg").value=f.image||"";$("n").value=f.nom||"";$("pg").value=f.page||"";$("src").value=f.source||"Petit Docteur";$("c").value=f.cat;$("r").value=f.risque;$("ca").value=f.causes||"";$("sy").value=f.symptomes||"";$("co").value=f.consequences||"";$("re").value=f.remedes||"";$("al").value=f.alerte||"";
 $("fpv").className=f.image?"pg":"pg hide";if(f.image)$("fpv").src="/api/admin/image/"+f.image;tab("e")}
 $("clr").onclick=function(){fill({cat:5,risque:"p"},"")};
-$("save").onclick=function(){var b={nom:$("n").value.trim(),page:$("pg").value,source:$("src").value,cat:+$("c").value,risque:$("r").value,symptomes:$("sy").value,remedes:$("re").value,alerte:$("al").value,image:$("fimg").value};
+$("save").onclick=function(){var b={nom:$("n").value.trim(),page:$("pg").value,source:$("src").value,cat:+$("c").value,risque:$("r").value,causes:$("ca").value,symptomes:$("sy").value,consequences:$("co").value,remedes:$("re").value,alerte:$("al").value,image:$("fimg").value};
 if(!b.nom){err({message:"Indiquez le nom de la maladie."});return}var id=$("fid").value;
 jpost(id?"/api/admin/fiches/"+id:"/api/admin/fiches",id?"PUT":"POST",b).then(function(){fill({cat:5,risque:"p"},"");tab("f")}).catch(err)};
 var props=[],pimg="";
 $("lire").onclick=function(){var f=$("img").files[0];if(!f){err({message:"Choisissez d'abord une photo."});return}err();$("lire").disabled=true;$("ls").textContent="Lecture en cours…";
 var fd=new FormData();fd.append("file",f);api("/api/admin/lire",{method:"POST",body:fd}).then(function(d){props=d.fiches;pimg=d.image;$("ls").textContent=props.length+" fiche(s) trouvée(s). Vérifiez chacune avant de l'enregistrer.";
-$("props").innerHTML=props.map(function(p,i){return'<div class="card"><b>'+esc(p.nom)+'</b><br><span class="meta">'+esc(CATS[p.cat])+(p.page?" · p. "+esc(p.page):"")+'</span><p>'+esc(p.remedes)+'</p><button class="pri" data-p="'+i+'">Vérifier et enregistrer</button></div>'}).join("")}).catch(function(e){$("ls").textContent="";err(e)}).then(function(){$("lire").disabled=false})};
+$("props").innerHTML=props.map(function(p,i){return'<div class="card"><b>'+esc(p.nom)+'</b><br><span class="meta">'+esc(CATS[p.cat])+(p.page?" · p. "+esc(p.page):"")+'</span><p>'+(p.causes?'<b>Causes :</b> '+esc(p.causes)+'<br>':'')+'<b>Remèdes :</b> '+esc(p.remedes)+(p.consequences?'<br><b>Conséquences :</b> '+esc(p.consequences):'')+'</p><button class="pri" data-p="'+i+'">Vérifier et enregistrer</button></div>'}).join("")}).catch(function(e){$("ls").textContent="";err(e)}).then(function(){$("lire").disabled=false})};
 $("props").onclick=function(e){var i=e.target.getAttribute("data-p");if(i===null)return;var p=props[+i];p.image=pimg;p.source=$("src").value;fill(p,"")};
 
 function loadD(){api("/api/admin/medecins").then(function(l){$("docs").innerHTML=l.length?l.map(function(d){var lab={attente:"En attente",approuve:"Approuvé",refuse:"Refusé"}[d.statut];

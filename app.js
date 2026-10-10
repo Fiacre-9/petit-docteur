@@ -9,13 +9,59 @@ var unread = 0, pending = 0, ctab = "annuaire", curReload = null, autoCall = fal
 var flt = { q: "", sp: "", vi: "", di: false };
 var isDoctorPath = location.pathname === "/medecin";
 
+// ---------- langues : français (base), anglais, lingala, swahili, kikongo, tshiluba ----------
+var LANGS = [["fr", "Français"], ["en", "English"], ["ln", "Lingála"], ["sw", "Kiswahili"], ["kg", "Kikongo"], ["lua", "Tshiluba"]];
+var DICT = window.I18N || {};
+var lang = "fr";
+try { lang = localStorage.getItem("pd_lang") || ""; } catch (e) { lang = ""; }
+if (!DICT[lang] && lang !== "fr") {
+  var nl = String(navigator.language || "fr").slice(0, 2).toLowerCase();
+  lang = DICT[nl] ? nl : "fr";
+}
+function T(s) { var d = DICT[lang]; return (d && d[s]) || s; }
+function t(s, v) { var r = T(s); if (v) for (var k in v) r = r.split("{" + k + "}").join(v[k]); return r; }
+var ATTRS = ["placeholder", "aria-label", "title", "alt"];
+function trNode(n) {
+  if (n.nodeType === 3) {
+    var p = n.parentNode;
+    if (p && p.closest && p.closest('[translate="no"],script,style')) return;
+    if (n.__o === undefined) { if (!/\S/.test(n.nodeValue)) return; n.__o = n.nodeValue; }
+    var m = n.__o.match(/^(\s*)([\s\S]*?)(\s*)$/), d = DICT[lang], tr = lang !== "fr" && d && d[m[2].replace(/\s+/g, " ")];
+    n.nodeValue = tr ? m[1] + tr + m[3] : n.__o;
+  } else if (n.nodeType === 1) {
+    if (n.closest && n.closest('[translate="no"]')) return;
+    for (var i = 0; i < ATTRS.length; i++) {
+      var a = ATTRS[i], v = n.getAttribute(a);
+      if (v === null) continue;
+      n.__a = n.__a || {};
+      if (n.__a[a] === undefined) n.__a[a] = v;
+      var dd = DICT[lang]; n.setAttribute(a, (lang !== "fr" && dd && dd[n.__a[a]]) || n.__a[a]);
+    }
+    for (var c = n.firstChild; c; c = c.nextSibling) trNode(c);
+  }
+}
+new MutationObserver(function (ms) { if (lang === "fr") return; ms.forEach(function (m) { for (var i = 0; i < m.addedNodes.length; i++) trNode(m.addedNodes[i]); }); }).observe(document.body, { childList: true, subtree: true });
+window.alert = (function (a) { return function (m) { a.call(window, T(String(m))); }; })(window.alert);
+function applyLang() {
+  document.documentElement.lang = lang;
+  document.title = T("Petit Docteur") === "Petit Docteur" ? document.title : T("Petit Docteur");
+  if (lang !== "fr" || document.body.__tr) { trNode(document.body); document.body.__tr = true; }
+  var sel = document.getElementById("lang"); if (sel) sel.value = lang;
+}
+function setLang(l) {
+  lang = l;
+  try { localStorage.setItem("pd_lang", l); } catch (e) { /* stockage indisponible */ }
+  applyLang(); route();
+  if (me && pushOn) syncPush();
+}
+
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
 function money(n) { return Number(n).toLocaleString("fr-FR").replace(/[  ]/g, " ") + " " + (cfg.currency === "CDF" ? "FC" : cfg.currency); }
 function api(p, o) {
   o = o || {}; o.credentials = "same-origin";
   return fetch(p, o).then(function (r) {
     return r.json().catch(function () { return {}; }).then(function (d) {
-      if (!r.ok) { var e = new Error(d.detail || "Erreur " + r.status); e.status = r.status; throw e; }
+      if (!r.ok) { var e = new Error(T(d.detail || "Erreur " + r.status)); e.status = r.status; throw e; }
       return d;
     });
   });
@@ -27,7 +73,7 @@ function avatar(u, cls) {
   var img = u.has_photo ? '<img alt="" src="/api/users/' + u.id + '/photo" onerror="this.remove()">' : "";
   return '<span class="av ' + (cls || "") + " c" + ((u.id || 0) % 6) + '">' + esc(initials(u.nom)) + img + "</span>";
 }
-function msg(el, text, ok) { el.textContent = text || ""; el.className = ok ? "ok" : "err"; }
+function msg(el, text, ok) { el.textContent = text ? T(text) : ""; el.className = ok ? "ok" : "err"; }
 function stopTimers() { clearInterval(viewTimer); viewTimer = null; }
 function isDoc() { return !!me && me.role === "medecin"; }
 function isDocOk() { return isDoc() && me.statut === "approuve"; }
@@ -51,14 +97,75 @@ var ICONS = {
   heart: '<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>',
   clock: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
   out: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',
+  bell: '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>',
   search: '<circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>'
 };
 function ic(n, cls) { return '<svg class="ic ' + (cls || "") + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[n] + "</svg>"; }
 function tile(color, icon, label, href, o) {
   o = o || {};
   var inner = ic(icon) + "<span>" + label + (o.sub ? "<small>" + o.sub + "</small>" : "") + "</span>" + (o.badge ? '<span class="nbadge">' + o.badge + "</span>" : "");
+  if (o.ext) return '<a class="tile t-' + color + '" target="_blank" rel="noopener" href="' + href + '">' + inner + "</a>";
   if (o.act) return '<button type="button" class="tile t-' + color + '" data-act="' + o.act + '">' + inner + "</button>";
   return '<a class="tile t-' + color + (o.off ? " off" : "") + '" href="' + href + '">' + inner + "</a>";
+}
+
+// ---------- WhatsApp : l'administrateur facilitateur aide pour l'achat des remèdes ----------
+function waLink(text) { return "https://wa.me/" + esc(cfg.whatsapp) + "?text=" + encodeURIComponent(T(text)); }
+function waButton(text, label, cls) {
+  return cfg.whatsapp ? '<a class="btn ' + (cls || "") + '" target="_blank" rel="noopener" href="' + waLink(text) + '">' + ic("chat") + label + "</a>" : "";
+}
+function footer() {
+  return '<p class="foot"><a href="/confidentialite">Confidentialité</a> · <a href="/conditions">Conditions d\'utilisation</a>' +
+    (cfg.whatsapp ? ' · <a target="_blank" rel="noopener" href="' + waLink("Bonjour, j'ai besoin d'aide sur Petit Docteur.") + '">Aide sur WhatsApp</a>' : "") + "</p>";
+}
+
+// ---------- notifications (reçues même application fermée) ----------
+var pushOn = false;
+function pushSupported() { return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window; }
+function b64(u) { var p = "=".repeat((4 - u.length % 4) % 4), r = atob((u + p).replace(/-/g, "+").replace(/_/g, "/")), a = new Uint8Array(r.length); for (var i = 0; i < r.length; i++) a[i] = r.charCodeAt(i); return a; }
+function syncPush() {
+  if (!pushSupported() || !me || Notification.permission !== "granted") return;
+  navigator.serviceWorker.ready.then(function (reg) { return reg.pushManager.getSubscription(); }).then(function (sub) {
+    pushOn = !!sub;
+    if (sub) return jsend("/api/push/subscribe", "POST", Object.assign(sub.toJSON(), { lang: lang }));
+  }).catch(function () {});
+}
+function enablePush() {
+  if (!pushSupported()) return Promise.reject(new Error(iosSafari && !standalone ? "Sur iPhone, installez d'abord l'application sur l'écran d'accueil, puis activez les notifications." : "Ce navigateur ne permet pas les notifications."));
+  return Notification.requestPermission().then(function (perm) {
+    if (perm !== "granted") throw new Error("Notifications refusées. Autorisez-les dans les réglages du navigateur.");
+    return Promise.all([navigator.serviceWorker.ready, api("/api/push/key")]);
+  }).then(function (r) {
+    if (!r[1].key) throw new Error("Les notifications ne sont pas disponibles sur ce serveur.");
+    return r[0].pushManager.getSubscription().then(function (sub) { return sub || r[0].pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(r[1].key) }); });
+  }).then(function (sub) { return jsend("/api/push/subscribe", "POST", Object.assign(sub.toJSON(), { lang: lang })); }).then(function () { pushOn = true; });
+}
+function disablePush() {
+  return navigator.serviceWorker.ready.then(function (reg) { return reg.pushManager.getSubscription(); }).then(function (sub) {
+    if (!sub) return;
+    return jsend("/api/push/unsubscribe", "POST", { endpoint: sub.endpoint }).catch(function () {}).then(function () { return sub.unsubscribe(); });
+  }).then(function () { pushOn = false; });
+}
+function settingsCard() {
+  var perm = pushSupported() ? Notification.permission : "unsupported";
+  return '<div class="inner"><h2>Notifications</h2><p class="sub">Recevez une alerte pour les messages, les appels vidéo et les demandes de confrères, même quand l\'application est fermée.</p>' +
+    (perm === "denied" ? '<p class="note">Notifications bloquées dans le navigateur. Autorisez-les dans les réglages du site pour les activer.</p>'
+      : '<button type="button" id="pushbtn" class="' + (pushOn ? "" : "pri") + '">' + ic("bell") + (pushOn ? "Désactiver les notifications" : "Activer les notifications") + '</button><p id="pushm" class="err"></p>') + "</div>";
+}
+function bindSettings() {
+  var b = $("pushbtn"); if (!b) return;
+  b.onclick = function () {
+    b.disabled = true;
+    (pushOn ? disablePush() : enablePush()).then(function () { route(); }).catch(function (e) { b.disabled = false; msg($("pushm"), e.message); });
+  };
+  if ($("delbtn")) $("delbtn").onclick = function () {
+    if (!confirm(T("Supprimer définitivement votre compte, vos messages et votre profil ? Cette action est irréversible."))) return;
+    jsend("/api/me", "DELETE", { password: $("delpw").value }).then(function () { me = null; unread = 0; pending = 0; stopInbox(); alert(T("Votre compte a été supprimé.")); go("#/"); }).catch(function (e) { msg($("delm"), e.message); });
+  };
+}
+function deleteBox() {
+  return '<details class="inner danger-zone"><summary>Supprimer mon compte</summary><p class="sub">Votre profil, vos messages et vos appels sont effacés pour toujours, ainsi que vos liens avec les confrères. Les reçus de paiement sont conservés sans votre nom.</p>' +
+    '<label for="delpw">Mot de passe</label><input id="delpw" type="password" autocomplete="current-password"><button type="button" class="danger" id="delbtn">Supprimer définitivement mon compte</button><p id="delm" class="err"></p></details>';
 }
 
 // ---------- navigation et barre du haut ----------
@@ -119,6 +226,13 @@ function loadActivity(el, max) {
 function noteUrgence() {
   return '<p class="note">Ces conseils viennent d\'un livre de médecine populaire. Ils ne remplacent pas un médecin. En cas d\'urgence, rendez-vous aux urgences ou appelez les secours : la consultation en ligne n\'est pas faite pour les urgences.</p>';
 }
+function waTile() { return cfg.whatsapp ? tile("o", "chat", "Acheter un remède", waLink("Bonjour, je souhaite acheter un remède."), { ext: true, sub: "Aide sur WhatsApp" }) : ""; }
+function payLine() { return '<p class="sub payline">' + t("Paiement par") + " <b>M-Pesa</b> · <b>Orange Money</b> · <b>Airtel Money</b> · <b>Afrimoney</b> · <b>Visa</b></p>"; }
+function pushBanner() {
+  if (!me || pushOn || !pushSupported() || Notification.permission === "denied" || sessionStorageGet("pd_pushno")) return "";
+  return '<div class="note pushnote"><span>Activez les notifications pour ne manquer aucun message ni appel, même application fermée.</span> <button type="button" class="pri" data-act="pushon">Activer</button> <button type="button" class="ghost" data-act="pushno">Plus tard</button></div>';
+}
+function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
 function installTile() { return standalone ? "" : tile("g", "down", "Installer l'application", "", { act: "install" }); }
 function viewHome() {
   if (isDoc()) return homeDoctor();
@@ -127,13 +241,13 @@ function viewHome() {
   var st = (s.medecins ? '<div class="stat"><b>' + s.medecins + "</b>médecins vérifiés</div>" : "") + (s.fiches ? '<div class="stat"><b>' + s.fiches + "</b>fiches relues</div>" : "") + (s.specialites ? '<div class="stat"><b>' + s.specialites + "</b>spécialités</div>" : "");
   $("view").innerHTML = '<section class="panel hero"><h1>Votre santé, avec l\'avis d\'un médecin</h1><p class="sub">Cherchez un mal pour lire des conseils relus par un médecin, trouvez un spécialiste et consultez-le en ligne par message ou en vidéo.</p>' +
     '<form id="hform" class="hsearch" role="search"><input id="hq" type="search" placeholder="Un mal, un symptôme" aria-label="Rechercher un mal"><button class="pri" type="submit">Chercher</button></form>' +
-    (st ? '<div class="stats">' + st + "</div>" : "") + "</section>" +
+    (st ? '<div class="stats">' + st + "</div>" : "") + payLine() + "</section>" +
     '<section class="panel"><h2>Que souhaitez-vous faire ?</h2><div class="tiles">' +
     tile("y", "book", "Chercher un mal", "#/fiches") + tile("b", "users", "Trouver un médecin", "#/medecins") +
     tile("t", "video", "Consulter en ligne", "#/compte", { sub: "Message et vidéo" }) +
-    tile("p", "star", "Passer Premium", "#/premium", { sub: money(cfg.price) + " / mois" }) +
-    tile("k", "brief", "Espace médecin", "/medecin", { sub: "Inscription gratuite" }) + installTile() + "</div></section>" +
-    '<section class="panel hide" id="hdocs"><div class="panel-h"><h2>Médecins à votre service</h2><a href="#/medecins">Voir tous</a></div><div class="tl" id="hlist"></div></section>' + noteUrgence();
+    tile("p", "star", "Passer Premium", "#/premium", { sub: t("{p} / mois", { p: money(cfg.price) }) }) +
+    tile("k", "brief", "Espace médecin", "/medecin", { sub: "Inscription gratuite" }) + waTile() + installTile() + "</div></section>" +
+    '<section class="panel hide" id="hdocs"><div class="panel-h"><h2>Médecins à votre service</h2><a href="#/medecins">Voir tous</a></div><div class="tl" id="hlist"></div></section>' + noteUrgence() + footer();
   $("hform").onsubmit = function (e) { e.preventDefault(); fq = $("hq").value; fcat = -1; go("#/fiches"); };
   api("/api/medecins").then(function (l) {
     if (!l.length || !$("hdocs")) return;
@@ -149,13 +263,13 @@ function homePatient() {
   $("view").innerHTML = '<div class="split"><section class="panel"><h2>Mon espace</h2><div class="inner"><div class="pro">' + avatar(me, "xl") + '<div class="grow"><h3>' + esc(me.nom) + '</h3><span class="meta">' + esc(me.telephone) + "</span><br>" +
     (me.premium ? '<span class="b s">Premium actif</span>' : '<span class="b v">Gratuit</span>') + "</div></div>" +
     '<div class="actions"><a class="ab" href="#/messages"><span class="c">' + ic("chat") + "</span>Messages" + (unread ? '<span class="nbadge">' + unread + "</span>" : "") + '</a><a class="ab" href="#/medecins"><span class="c">' + ic("users") + '</span>Médecins</a><a class="ab" href="#/premium"><span class="c">' + ic("star") + '</span>Premium</a><a class="ab" href="#/compte"><span class="c">' + ic("user") + "</span>Profil</a></div>" +
-    '<dl class="kv"><dt>Abonnement</dt><dd>' + (me.premium ? "jusqu\'au " + esc(until) : "aucun") + '</dd><dt>Consultations</dt><dd id="k1">…</dd><dt>Messages non lus</dt><dd id="k2">…</dd></dl></div>' +
+    '<dl class="kv"><dt>Abonnement</dt><dd>' + (me.premium ? t("jusqu'au {d}", { d: esc(until) }) : "aucun") + '</dd><dt>Consultations</dt><dd id="k1">…</dd><dt>Messages non lus</dt><dd id="k2">…</dd></dl></div>' +
     '<h2 style="margin-top:16px">Activité récente</h2><div class="tl" id="act"></div></section>' +
     '<section class="panel"><h2>Que souhaitez-vous faire ?</h2><div class="tiles">' +
     tile("y", "book", "Chercher un mal", "#/fiches") + tile("b", "users", "Trouver un médecin", "#/medecins") +
     tile("t", "chat", "Mes messages", "#/messages", { badge: unread || "" }) +
-    tile("p", "star", me.premium ? "Prolonger Premium" : "Passer Premium", "#/premium", { sub: money(cfg.price) + " / mois" }) +
-    tile("o", "user", "Mon profil", "#/compte") + installTile() + "</div></section></div>" + noteUrgence();
+    tile("p", "star", me.premium ? "Prolonger Premium" : "Passer Premium", "#/premium", { sub: t("{p} / mois", { p: money(cfg.price) }) }) +
+    tile("o", "user", "Mon profil", "#/compte") + waTile() + installTile() + "</div></section></div>" + pushBanner() + noteUrgence() + footer();
   loadActivity("act", 4);
   api("/api/tableau").then(function (t) { if ($("k1")) { $("k1").textContent = t.consultations; $("k2").textContent = t.non_lus; } }).catch(function () {});
 }
@@ -165,7 +279,7 @@ function homeDoctor() {
     : '<p class="note">Votre inscription est en attente de validation. Complétez votre profil : l\'annuaire des confrères, le réseau et les consultations s\'ouvrent dès l\'approbation.</p>';
   var meta = [me.specialite, me.ville].filter(Boolean).map(esc).join(" · ");
   $("view").innerHTML = banner + '<div class="split"><section class="panel"><h2>Mon espace médecin</h2><div class="inner"><div class="pro">' + avatar(me, "xl") + '<div class="grow"><h3>' + esc(drName(me.nom)) + '</h3><span class="meta">' + meta + "</span><br>" +
-    '<span class="meta">N° ordre : ' + esc(me.numero_ordre) + '</span><br><span class="b ' + (ok ? "s" : me.statut === "refuse" ? "u" : "p") + '">' + (ok ? "Compte validé" : me.statut === "refuse" ? "Refusé" : "En attente") + "</span></div></div>" +
+    '<span class="meta">' + t("N° ordre : {n}", { n: esc(me.numero_ordre) }) + '</span><br><span class="b ' + (ok ? "s" : me.statut === "refuse" ? "u" : "p") + '">' + (ok ? "Compte validé" : me.statut === "refuse" ? "Refusé" : "En attente") + "</span></div></div>" +
     '<div class="actions"><a class="ab" href="#/messages"><span class="c">' + ic("chat") + "</span>Messages" + (unread ? '<span class="nbadge">' + unread + "</span>" : "") + "</a>" +
     '<a class="ab" href="#/confreres"><span class="c">' + ic("users") + "</span>Confrères</a>" +
     '<a class="ab" href="#/demandes"><span class="c">' + ic("userplus") + "</span>Demandes" + (pending ? '<span class="nbadge">' + pending + "</span>" : "") + "</a>" +
@@ -177,7 +291,7 @@ function homeDoctor() {
     tile("b", "users", "Trouver des confrères", "#/confreres", { off: !ok }) +
     tile("p", "userplus", "Demandes reçues", "#/demandes", { badge: pending || "", off: !ok }) +
     tile("g", "usercheck", "Mon réseau", "#/reseau", { off: !ok }) +
-    tile("o", "user", "Compléter mon profil", "#/compte") + tile("y", "book", "Fiches santé", "#/fiches") + installTile() + "</div></section></div>";
+    tile("o", "user", "Compléter mon profil", "#/compte") + tile("y", "book", "Fiches santé", "#/fiches") + installTile() + "</div></section></div>" + pushBanner() + footer();
   if (ok) loadActivity("act", 4);
   api("/api/tableau").then(function (t) { if ($("k1")) { $("k1").textContent = t.consultations; $("k2").textContent = t.confreres; $("k3").textContent = t.demandes; } }).catch(function () {});
 }
@@ -187,7 +301,7 @@ function viewFiches() {
   $("view").innerHTML = '<section class="panel"><h1>Fiches santé</h1><p class="sub">Cherchez un mal pour voir les conseils relus par un médecin.</p>' + noteUrgence() +
     '<input id="q" type="search" placeholder="Un mal, un symptôme" aria-label="Recherche" value="' + esc(fq) + '">' +
     '<div class="chips" id="cats"></div><p class="sub" id="cnt"></p><div class="fl" id="list"></div><div id="upsell"></div>' +
-    (cfg.whatsapp ? '<p><a class="btn" target="_blank" rel="noopener" href="https://wa.me/' + esc(cfg.whatsapp) + '">Écrire sur WhatsApp</a></p>' : "") + "</section>";
+    waButton("Bonjour, j'ai une question sur un remède.", "Écrire sur WhatsApp") + footer() + "</section>";
   $("q").oninput = function () { fq = $("q").value; clearTimeout(searchTimer); searchTimer = setTimeout(loadFiches, 250); };
   $("cats").onclick = function (e) { var c = e.target.getAttribute("data-c"); if (c === null) return; fcat = +c; chips(); loadFiches(); };
   chips(); loadFiches();
@@ -198,20 +312,25 @@ function chips() {
   $("cats").innerHTML = h;
 }
 function premiumCta() {
-  return me ? (me.role === "patient" ? '<a class="btn" href="#/premium">Passer Premium · ' + money(cfg.price) + " / mois</a>" : "")
+  return me ? (me.role === "patient" ? '<a class="btn" href="#/premium">' + t("Passer Premium · {p} / mois", { p: money(cfg.price) }) + "</a>" : "")
     : '<a class="btn" href="#/compte">Créer un compte ou se connecter</a>';
 }
 function loadFiches() {
   api("/api/fiches?q=" + encodeURIComponent(fq) + "&cat=" + fcat).then(function (l) {
     if (!$("list")) return;
-    $("cnt").textContent = l.length + " fiche(s)";
+    $("cnt").textContent = t("{n} fiche(s)", { n: l.length }) + (lang !== "fr" ? " · " + T("Le contenu des fiches est en français.") : "");
     var locked = l.some(function (r) { return r.locked; });
+    var sec = function (title, txt) { return txt ? "<h4>" + title + "</h4><p>" + esc(txt) + "</p>" : ""; };
     $("list").innerHTML = l.length ? l.map(function (r) {
+      var gal = r.images && r.images.length ? '<div class="gal">' + r.images.map(function (i) {
+        return '<figure><img loading="lazy" alt="' + esc(i.terme || r.nom) + '" src="/api/remede-img/' + i.id + '"><figcaption translate="no">' + esc(i.terme ? i.terme + " · " : "") + (i.source ? '<a target="_blank" rel="noopener" href="' + esc(i.source) + '">' + esc(i.auteur) + "</a>" : esc(i.auteur)) + (i.licence ? " · " + esc(i.licence) : "") + "</figcaption></figure>";
+      }).join("") + "</div>" : "";
       return '<div class="card"><details><summary><span>' + esc(r.nom) + '<br><span class="meta">' + esc(cfg.cats[r.cat]) + '</span></span><span class="b ' + r.risque + '">' + RL[r.risque] + "</span></summary>" +
-        "<h4>Symptômes</h4><p>" + esc(r.symptomes) + "</p><h4>Remède du livre</h4><p>" + esc(r.remedes) + "</p>" +
+        sec("Causes", r.causes) + sec("Symptômes", r.symptomes) + sec("Conséquences", r.consequences) + sec("Remèdes du livre", r.remedes) + gal +
         (r.alerte ? '<div class="al"><b>Alerte :</b> ' + esc(r.alerte) + "</div>" : "") +
-        (r.locked ? '<div class="lock">🔒 Aperçu limité. Le détail complet est réservé aux abonnés Premium.</div>' : "") + "</details></div>";
-    }).join("") : '<div class="empty">' + ic("search") + '<p>Aucune fiche validée pour cette recherche.</p></div>';
+        (r.locked ? '<div class="lock">🔒 Aperçu limité. Le détail complet est réservé aux abonnés Premium.</div>' : "") +
+        waButton("Bonjour, je souhaite acheter le remède pour : " + r.nom, "Acheter ce remède sur WhatsApp") + "</details></div>";
+    }).join("") : '<div class="empty">' + ic("search") + "<p>Aucune fiche validée pour cette recherche.</p></div>";
     $("upsell").innerHTML = locked ? '<div class="card prem"><b>Voir toutes les fiches en détail</b><p class="sub">Symptômes complets, remèdes, consultation d\'un médecin par message et vidéo.</p>' + premiumCta() + "</div>" : "";
   }).catch(function () {});
 }
@@ -240,8 +359,8 @@ function pcard(d, actions) {
   var meta = [d.specialite, d.ville].filter(Boolean).map(esc).join(" · ");
   return '<article class="inner pcard">' + avatar(d, "xl") + '<div class="grow"><h3>' + esc(drName(d.nom)) + '</h3><div class="meta">' + meta + "</div>" +
     (d.cabinet ? '<div class="meta">' + ic("pin", "s") + esc(d.cabinet) + "</div>" : "") + (d.langues ? '<div class="meta">' + ic("globe", "s") + esc(d.langues) + "</div>" : "") +
-    '<div><span class="b ' + (d.disponible ? "s" : "v") + '">' + (d.disponible ? "Disponible" : "Indisponible") + "</span>" + (d.experience ? '<span class="b v">' + d.experience + " ans d'expérience</span>" : "") + "</div>" +
-    (d.bio ? '<p class="bio">' + esc(d.bio) + "</p>" : "") + (actions ? '<div class="pact">' + actions + "</div>" : "") + "</div></article>";
+    '<div><span class="b ' + (d.disponible ? "s" : "v") + '">' + (d.disponible ? "Disponible" : "Indisponible") + "</span>" + (d.experience ? '<span class="b v">' + t("{n} ans d'expérience", { n: d.experience }) + "</span>" : "") + "</div>" +
+    (d.bio ? '<p class="bio" translate="no">' + esc(d.bio) + "</p>" : "") + (actions ? '<div class="pact">' + actions + "</div>" : "") + "</div></article>";
 }
 function emptyBox(icon, text) { return '<div class="empty">' + ic(icon) + "<p>" + text + "</p></div>"; }
 function btn(act, id, label, cls, icon) { return '<button type="button" class="' + (cls || "") + '" data-act="' + act + '" data-i="' + id + '">' + (icon ? ic(icon) : "") + label + "</button>"; }
@@ -315,6 +434,8 @@ document.addEventListener("click", function (e) {
   if (a === "login") go("#/compte");
   else if (a === "prem") go("#/premium");
   else if (a === "install") $("install").onclick();
+  else if (a === "pushon") enablePush().then(function () { route(); }).catch(function (er) { alert(er.message); });
+  else if (a === "pushno") { try { sessionStorage.setItem("pd_pushno", "1"); } catch (x) { /* ignoré */ } route(); }
   else if (a === "tab") go("#/" + (el.getAttribute("data-t") === "annuaire" ? "confreres" : el.getAttribute("data-t")));
   else if (a === "chat") jsend("/api/conversations", "POST", { doctor_id: id }).then(function (c) { go("#/chat/" + c.id); }).catch(fail);
   else if (a === "conn") jsend("/api/confreres/" + id + "/connect", "POST").then(done).catch(fail);
@@ -330,9 +451,10 @@ function viewCompte() {
   var until = me.premium_until ? new Date(me.premium_until).toLocaleDateString("fr-FR") : "";
   $("view").innerHTML = '<section class="panel"><h1>Mon compte</h1><div class="split"><div class="inner"><div class="row-s">' + avatar(me, "xl") + '<div class="grow"><h3>' + esc(me.nom) + '</h3><span class="meta">' + esc(me.telephone) + "</span></div></div>" +
     (me.premium ? '<p><span class="b s">Premium actif</span> jusqu\'au ' + esc(until) + "</p>" : '<p><span class="b v">Gratuit</span> Accès limité : aperçu des fiches, liste des médecins.</p>') +
-    '<a class="btn' + (me.premium ? "" : " pri") + '" href="#/premium">' + (me.premium ? "Prolonger de 30 jours" : "Passer Premium · " + money(cfg.price) + " / mois") + "</a> " + '<button id="out" type="button">' + ic("out") + "Se déconnecter</button></div>" +
-    '<div class="inner"><h2>Mon profil</h2>' + (me.premium ? profileForm(false) : '<p class="sub">🔒 Le profil complet (photo, ville, présentation) est réservé aux abonnés Premium.</p>') + "</div></div></section>";
-  bindProfile(false); $("out").onclick = logout;
+    '<a class="btn' + (me.premium ? "" : " pri") + '" href="#/premium">' + (me.premium ? T("Prolonger de 30 jours") : t("Passer Premium · {p} / mois", { p: money(cfg.price) })) + "</a> " + '<button id="out" type="button">' + ic("out") + "Se déconnecter</button></div>" +
+    '<div class="inner"><h2>Mon profil</h2>' + (me.premium ? profileForm(false) : '<p class="sub">🔒 Le profil complet (photo, ville, présentation) est réservé aux abonnés Premium.</p>') + "</div></div>" +
+    '<div class="split2">' + settingsCard() + deleteBox() + "</div>" + footer() + "</section>";
+  bindProfile(false); bindSettings(); $("out").onclick = logout;
 }
 function profileForm(doc) {
   return '<label for="pn">Nom complet</label><input id="pn" value="' + esc(me.nom) + '" autocomplete="name">' +
@@ -359,7 +481,7 @@ function bindProfile(doc) {
     }).then(function () { return loadMe(); }).then(function () { route(); if ($("pm")) msg($("pm"), "Profil enregistré.", true); }).catch(function (e) { msg($("pm"), e.message); });
   };
 }
-function logout() { jsend("/api/user/logout", "POST").then(function () { me = null; unread = 0; pending = 0; stopInbox(); go("#/"); }); }
+function logout() { (pushSupported() ? navigator.serviceWorker.ready.then(function (reg) { return reg.pushManager.getSubscription(); }).then(function (sub) { return sub ? jsend("/api/push/unsubscribe", "POST", { endpoint: sub.endpoint }).catch(function () {}) : null; }).catch(function () {}) : Promise.resolve()).then(function () { return jsend("/api/user/logout", "POST"); }).then(function () { pushOn = false; me = null; unread = 0; pending = 0; stopInbox(); go("#/"); }); }
 
 function viewAuth() {
   var doc = isDoctorPath;
@@ -375,8 +497,8 @@ function viewAuth() {
     '<label for="rt">Téléphone</label><input id="rt" type="tel" autocomplete="tel" placeholder="0812345678">' +
     '<label for="rp">Mot de passe (8 caractères minimum)</label><input id="rp" type="password" autocomplete="new-password">' +
     (doc ? '<label for="rs">Spécialité</label><input id="rs" placeholder="Ex : Médecine générale"><label for="ro">Numéro d\'ordre des médecins</label><input id="ro">' : "") +
-    '<label class="chk"><input type="checkbox" id="rc"> J\'accepte que mes données de santé (messages, profil) soient traitées pour les consultations. Elles ne sont lisibles que par moi et mon médecin.</label>' +
-    '<button class="pri" id="rgo">Créer mon compte</button><p id="rm" class="err"></p></div></div></div></section>';
+    '<label class="chk"><input type="checkbox" id="rc"> J\'accepte que mes données de santé (messages, profil) soient traitées pour les consultations. Dans l\'application, elles ne sont affichées qu\'à moi et à mon médecin.</label>' +
+    '<button class="pri" id="rgo">Créer mon compte</button><p id="rm" class="err"></p></div></div></div>' + footer() + "</section>";
   $("t-in").onclick = function () { $("f-in").className = "inner"; $("f-up").className = "inner hide"; $("t-in").className = "on"; $("t-up").className = ""; };
   $("t-up").onclick = function () { $("f-up").className = "inner"; $("f-in").className = "inner hide"; $("t-up").className = "on"; $("t-in").className = ""; };
   $("lgo").onclick = function () {
@@ -387,7 +509,7 @@ function viewAuth() {
       specialite: doc ? $("rs").value : "", numero_ordre: doc ? $("ro").value : "", consent: $("rc").checked }).then(afterAuth).catch(function (e) { msg($("rm"), e.message); });
   };
 }
-function afterAuth() { return loadMe().then(function () { startInbox(); if (location.hash === "#/") route(); else location.hash = "#/"; }); }
+function afterAuth() { return loadMe().then(function () { startInbox(); syncPush(); if (location.hash === "#/") route(); else location.hash = "#/"; }); }
 
 // ---------- profil du médecin ----------
 function viewDoctor() {
@@ -397,8 +519,9 @@ function viewDoctor() {
     : '<p class="note">Votre inscription est en attente de validation. Complétez votre profil : vous serez visible dès l\'approbation.</p>';
   $("view").innerHTML = '<section class="panel"><h1>Mon profil</h1>' + banner + '<div class="split"><div><p class="sub">Voici comment les autres vous voient.</p>' + pcard(me, "") +
     '<p style="margin-top:12px"><button id="out" type="button">' + ic("out") + "Se déconnecter</button></p></div>" +
-    '<div class="inner"><h2>Modifier mon profil</h2>' + profileForm(true) + "</div></div></section>";
-  bindProfile(true); $("out").onclick = logout;
+    '<div class="inner"><h2>Modifier mon profil</h2>' + profileForm(true) + "</div></div>" +
+    '<div class="split2">' + settingsCard() + deleteBox() + "</div>" + footer() + "</section>";
+  bindProfile(true); bindSettings(); $("out").onclick = logout;
 }
 
 // ---------- paiement Premium ----------
@@ -406,10 +529,10 @@ function viewPremium() {
   if (!me) { go("#/compte"); return; }
   if (me.role === "medecin") { go("#/compte"); return; }
   var q = new URLSearchParams(location.search), ref = q.get("ref");
-  $("view").innerHTML = '<section class="panel"><h1>Passer Premium</h1><div class="split"><div class="inner prem"><p class="big">' + money(cfg.price) + ' <span class="sub">/ ' + cfg.days + ' jours</span></p><ul class="ticks"><li>Fiches complètes : symptômes, remèdes, alertes</li><li>Message direct avec les médecins</li><li>Consultation vidéo</li><li>Profil avec photo</li></ul></div>' +
-    (cfg.paiement ? '<div class="inner"><label>Moyen de paiement</label><div class="chips"><button id="m-mob" class="on">Mobile Money</button><button id="m-card">Carte bancaire</button></div>' +
-      '<div id="mobbox"><label for="pph">Numéro Mobile Money</label><input id="pph" type="tel" value="' + esc(me.telephone) + '" placeholder="0812345678"></div>' +
-      '<button class="pri" id="pay">Payer ' + money(cfg.price) + '</button><p id="paym" class="err"></p></div>' :
+  $("view").innerHTML = '<section class="panel"><h1>Passer Premium</h1><div class="split"><div class="inner prem"><p class="big">' + money(cfg.price) + ' <span class="sub">' + t("/ {n} jours", { n: cfg.days }) + '</span></p><ul class="ticks"><li>Fiches complètes : symptômes, remèdes, alertes</li><li>Message direct avec les médecins</li><li>Consultation vidéo</li><li>Profil avec photo</li></ul>' + payLine() + '</div>' +
+    (cfg.paiement ? '<div class="inner"><label>Moyen de paiement</label><div class="chips"><button id="m-mob" class="on">Mobile Money (M-Pesa, Orange, Airtel, Afrimoney)</button><button id="m-card">Carte bancaire (Visa)</button></div>' +
+      '<div id="mobbox"><label for="pph">Numéro Mobile Money (M-Pesa, Orange Money, Airtel Money ou Afrimoney)</label><input id="pph" type="tel" value="' + esc(me.telephone) + '" placeholder="0812345678"></div>' +
+      '<button class="pri" id="pay">' + t("Payer {p}", { p: money(cfg.price) }) + '</button><p id="paym" class="err"></p></div>' :
       '<p class="note">Le paiement n\'est pas encore activé sur ce serveur.</p>') + "</div></section>";
   var method = "mobile";
   if ($("m-mob")) {
@@ -464,7 +587,7 @@ function viewChat(id) {
     var near = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
     l.forEach(function (m) {
       last = Math.max(last, m.id);
-      var d = document.createElement("div"); d.className = "bub " + (m.from_id === me.id ? "me" : "you");
+      var d = document.createElement("div"); d.className = "bub " + (m.from_id === me.id ? "me" : "you"); d.setAttribute("translate", "no");
       d.innerHTML = esc(m.texte).replace(/\n/g, "<br>") + '<span class="t">' + esc(m.ts.slice(11, 16)) + "</span>"; box.appendChild(d);
     });
     if (near || first) box.scrollTop = box.scrollHeight;
@@ -576,7 +699,7 @@ function tickInbox() {
     var a = r.appels[0];
     if (a && !call && shownCall !== a.id) {
       shownCall = a.id;
-      $("inc-t").textContent = "Appel vidéo de " + a.de;
+      $("inc-t").textContent = t("Appel vidéo de {n}", { n: a.de });
       $("incoming").className = "overlay";
       $("inc-ok").onclick = function () {
         $("incoming").className = "overlay hide";
@@ -592,8 +715,15 @@ function stopInbox() { clearInterval(inboxTimer); inboxTimer = null; }
 
 function loadMe() { return api("/api/me").then(function (u) { me = u; }).catch(function () { me = null; }); }
 var standalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+function buildLangSelect() {
+  var sel = $("lang"); if (!sel) return;
+  sel.innerHTML = LANGS.map(function (l) { return '<option value="' + l[0] + '">' + l[1] + "</option>"; }).join("");
+  sel.value = lang;
+  sel.onchange = function () { setLang(sel.value); };
+}
 Promise.all([api("/api/config").then(function (c) { cfg = c; }).catch(function () {}), loadFacettes(), loadMe()]).then(function () {
-  if (me) startInbox();
+  buildLangSelect(); applyLang();
+  if (me) { startInbox(); syncPush(); }
   if (new URLSearchParams(location.search).get("ref")) location.hash = "#/premium";
   route();
 });

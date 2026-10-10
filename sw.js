@@ -1,7 +1,7 @@
 /* Petit Docteur : service worker. Rend l'app installable et garde l'écran de base hors ligne.
    Les appels /api ne sont jamais mis en cache (données de santé, sessions, paiements). */
-var CACHE = "pd-v2";
-var SHELL = ["/", "/static/app.js", "/static/style.css", "/icon-192.png"];
+var CACHE = "pd-v3";
+var SHELL = ["/", "/static/app.js", "/static/i18n.js", "/static/style.css", "/icon-192.png"];
 function keep(r, res) { if (res && res.ok) { var cp = res.clone(); caches.open(CACHE).then(function (c) { c.put(r, cp); }); } return res; }
 self.addEventListener("install", function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return Promise.all(SHELL.map(function (u) { return c.add(u).catch(function () {}); })); }).then(function () { return self.skipWaiting(); }));
@@ -28,4 +28,27 @@ self.addEventListener("fetch", function (e) {
       return m || net;
     }));
   }
+});
+
+// notifications : reçues même application fermée
+self.addEventListener("push", function (e) {
+  var d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (x) { d = { body: e.data ? e.data.text() : "" }; }
+  e.waitUntil(self.registration.showNotification(d.title || "Petit Docteur", {
+    body: d.body || "", icon: "/icon-192.png", badge: "/icon-192.png", tag: d.tag || "pd", renotify: true,
+    requireInteraction: !!d.urgent, vibrate: d.urgent ? [300, 150, 300, 150, 300] : [120], data: { url: d.url || "/" }
+  }));
+});
+self.addEventListener("notificationclick", function (e) {
+  e.notification.close();
+  var url = (e.notification.data && e.notification.data.url) || "/";
+  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(function (list) {
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].url.indexOf(self.location.origin) === 0 && "focus" in list[i]) {
+        list[i].navigate(url).catch(function () {});
+        return list[i].focus();
+      }
+    }
+    return self.clients.openWindow(url);
+  }));
 });
