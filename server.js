@@ -76,6 +76,15 @@ CREATE INDEX IF NOT EXISTS idx_sig_call ON signals(call_id, id);
 CREATE TABLE IF NOT EXISTS orders(ref TEXT PRIMARY KEY, user_id INTEGER NOT NULL, method TEXT, phone TEXT,
   amount INTEGER, currency TEXT, status TEXT DEFAULT 'pending', order_number TEXT, created_ms INTEGER, paid_ms INTEGER);
 `);
+// colonnes ajoutées après la première version (ignorées si elles existent déjà)
+for (const col of ["cabinet TEXT DEFAULT ''", "langues TEXT DEFAULT ''", "experience INTEGER DEFAULT 0"]) {
+  try { db.exec("ALTER TABLE users ADD COLUMN " + col); } catch (e) { /* déjà présente */ }
+}
+db.exec(`
+CREATE TABLE IF NOT EXISTS connexions(id INTEGER PRIMARY KEY AUTOINCREMENT, de_id INTEGER NOT NULL, vers_id INTEGER NOT NULL,
+  statut TEXT NOT NULL DEFAULT 'attente', created_at TEXT, UNIQUE(de_id, vers_id));
+CREATE INDEX IF NOT EXISTS idx_cx_vers ON connexions(vers_id, statut);
+`);
 const log = (texte) => db.prepare("INSERT INTO journal(ts,texte) VALUES(?,?)").run(now(), texte);
 
 const seedFile = path.join(__dirname, "seed.json");
@@ -138,6 +147,7 @@ const cookies = (req) => Object.fromEntries((req.headers.cookie || "").split(";"
   const i = c.indexOf("="); return i < 0 ? ["", ""] : [c.slice(0, i).trim(), c.slice(i + 1).trim()];
 }));
 const clip = (v, max) => String(v == null ? "" : v).trim().slice(0, max);
+const years = (v) => Math.max(0, Math.min(70, parseInt(v, 10) || 0));
 
 function hashPassword(pw) {
   const salt = crypto.randomBytes(16).toString("hex");
@@ -176,7 +186,8 @@ app.post("/api/logout", (req, res) => { res.clearCookie("pd_session"); res.json(
 const isPremium = (u) => u.role === "medecin" ? u.statut === "approuve" : u.premium_until > Date.now();
 function publicUser(u) {
   return { id: u.id, nom: u.nom, telephone: u.telephone, role: u.role, statut: u.statut, specialite: u.specialite,
-    numero_ordre: u.numero_ordre, ville: u.ville, bio: u.bio, has_photo: !!u.photo, disponible: !!u.disponible,
+    numero_ordre: u.numero_ordre, ville: u.ville, bio: u.bio, cabinet: u.cabinet || "", langues: u.langues || "",
+    experience: u.experience || 0, has_photo: !!u.photo, disponible: !!u.disponible,
     premium: isPremium(u), premium_until: u.premium_until || 0 };
 }
 function userFromReq(req) {
@@ -232,8 +243,8 @@ app.put("/api/me/profile", needUser, needPremium, (req, res) => {
   if (u.role === "medecin") {
     const sp = clip(b.specialite, 100);
     if (!sp) return res.status(400).json({ detail: "La spécialité est obligatoire." });
-    db.prepare("UPDATE users SET nom=?,specialite=?,bio=?,ville=?,disponible=? WHERE id=?")
-      .run(nom, sp, clip(b.bio, 800), clip(b.ville, 80), b.disponible ? 1 : 0, u.id);
+    db.prepare("UPDATE users SET nom=?,specialite=?,bio=?,ville=?,disponible=?,cabinet=?,langues=?,experience=? WHERE id=?")
+      .run(nom, sp, clip(b.bio, 800), clip(b.ville, 80), b.disponible ? 1 : 0, clip(b.cabinet, 120), clip(b.langues, 100), years(b.experience), u.id);
   } else {
     db.prepare("UPDATE users SET nom=?,bio=?,ville=? WHERE id=?").run(nom, clip(b.bio, 800), clip(b.ville, 80), u.id);
   }
@@ -245,8 +256,8 @@ app.put("/api/me/profile-attente", needUser, (req, res) => {
   if (u.role !== "medecin") return res.status(403).json({ detail: "Réservé aux médecins." });
   const nom = clip(b.nom, 120), sp = clip(b.specialite, 100);
   if (nom.length < 3 || !nom.includes(" ") || !sp) return res.status(400).json({ detail: "Nom complet et spécialité obligatoires." });
-  db.prepare("UPDATE users SET nom=?,specialite=?,bio=?,ville=?,disponible=? WHERE id=?")
-    .run(nom, sp, clip(b.bio, 800), clip(b.ville, 80), b.disponible ? 1 : 0, u.id);
+  db.prepare("UPDATE users SET nom=?,specialite=?,bio=?,ville=?,disponible=?,cabinet=?,langues=?,experience=? WHERE id=?")
+    .run(nom, sp, clip(b.bio, 800), clip(b.ville, 80), b.disponible ? 1 : 0, clip(b.cabinet, 120), clip(b.langues, 100), years(b.experience), u.id);
   res.json({ ok: true });
 });
 
@@ -279,12 +290,130 @@ app.get("/api/users/:id/photo", optUser, (req, res) => {
 });
 
 // ---------- médecins (liste visible par tous, contact réservé) ----------
-app.get("/api/medecins", (req, res) => {
-  const q = clip(req.query.q, 80);
-  let sql = "SELECT id,nom,specialite,ville,bio,disponible,(photo<>'') has_photo FROM users WHERE role='medecin' AND statut='approuve'";
+const DOC_COLS = "id,nom,specialite,ville,bio,cabinet,langues,experience,disponible,(photo<>'') has_photo";
+// filtres communs à l'annuaire public et à l'annuaire des confrères
+function docFilter(req, exceptId) {
+  let sql = " FROM users WHERE role='medecin' AND statut='approuve'";
   const args = [];
-  if (q) { sql += " AND (nom LIKE ? OR specialite LIKE ?)"; args.push(`%${q}%`, `%${q}%`); }
-  res.json(db.prepare(sql + " ORDER BY disponible DESC, nom").all(...args).map((d) => ({ ...d, bio: d.bio.slice(0, 160) })));
+  if (exceptId) { sql += " AND id<>?"; args.push(exceptId); }
+  const q = clip(req.query.q, 80), sp = clip(req.query.specialite, 100), vi = clip(req.query.ville, 80);
+  if (q) { sql += " AND (nom LIKE ? OR specialite LIKE ? OR ville LIKE ? OR cabinet LIKE ?)"; args.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`); }
+  if (sp) { sql += " AND specialite = ? COLLATE NOCASE"; args.push(sp); }
+  if (vi) { sql += " AND ville = ? COLLATE NOCASE"; args.push(vi); }
+  if (req.query.dispo === "1") sql += " AND disponible=1";
+  return { sql, args };
+}
+app.get("/api/medecins", (req, res) => {
+  const f = docFilter(req);
+  res.json(db.prepare("SELECT " + DOC_COLS + f.sql + " ORDER BY disponible DESC, nom LIMIT 200").all(...f.args)
+    .map((d) => ({ ...d, bio: d.bio.slice(0, 240) })));
+});
+// listes pour les filtres et chiffres de l'accueil (publics, sans donnée personnelle)
+app.get("/api/facettes", (req, res) => {
+  const one = (sql) => db.prepare(sql).all().map((r) => r.v);
+  res.json({
+    specialites: one("SELECT DISTINCT specialite v FROM users WHERE role='medecin' AND statut='approuve' AND specialite<>'' ORDER BY specialite COLLATE NOCASE"),
+    villes: one("SELECT DISTINCT ville v FROM users WHERE role='medecin' AND statut='approuve' AND ville<>'' ORDER BY ville COLLATE NOCASE"),
+    stats: {
+      medecins: db.prepare("SELECT COUNT(*) n FROM users WHERE role='medecin' AND statut='approuve'").get().n,
+      fiches: db.prepare("SELECT COUNT(*) n FROM fiches WHERE valide=1").get().n,
+      specialites: db.prepare("SELECT COUNT(DISTINCT specialite COLLATE NOCASE) n FROM users WHERE role='medecin' AND statut='approuve' AND specialite<>''").get().n,
+    },
+  });
+});
+
+// ---------- réseau entre médecins : annuaire des confrères, demandes, contacts ----------
+const needDoctor = (req, res, next) => {
+  if (req.user.role !== "medecin" || req.user.statut !== "approuve")
+    return res.status(403).json({ detail: "Réservé aux médecins dont le compte est validé." });
+  next();
+};
+const linkBetween = (a, b) => db.prepare("SELECT * FROM connexions WHERE (de_id=? AND vers_id=?) OR (de_id=? AND vers_id=?)").get(a, b, b, a);
+const linkState = (l, me) => (!l ? "aucune" : l.statut === "accepte" ? "connecte" : l.de_id === me ? "envoyee" : "recue");
+const approvedDoctor = (id) => db.prepare("SELECT id FROM users WHERE id=? AND role='medecin' AND statut='approuve'").get(parseInt(id, 10));
+
+app.get("/api/confreres", needUser, needDoctor, (req, res) => {
+  const f = docFilter(req, req.user.id);
+  const links = new Map();
+  for (const l of db.prepare("SELECT * FROM connexions WHERE de_id=? OR vers_id=?").all(req.user.id, req.user.id))
+    links.set(l.de_id === req.user.id ? l.vers_id : l.de_id, l);
+  res.json(db.prepare("SELECT " + DOC_COLS + f.sql + " ORDER BY disponible DESC, nom LIMIT 200").all(...f.args)
+    .map((d) => ({ ...d, bio: d.bio.slice(0, 400), etat: linkState(links.get(d.id), req.user.id) })));
+});
+app.get("/api/reseau", needUser, needDoctor, (req, res) => {
+  const me = req.user.id;
+  const rows = db.prepare("SELECT c.de_id,c.vers_id,c.statut,u.id,u.nom,u.specialite,u.ville,u.bio,u.cabinet,u.langues,u.experience,u.disponible,(u.photo<>'') has_photo " +
+    "FROM connexions c JOIN users u ON u.id = CASE WHEN c.de_id=? THEN c.vers_id ELSE c.de_id END " +
+    "WHERE (c.de_id=? OR c.vers_id=?) AND u.role='medecin' AND u.statut='approuve' ORDER BY u.nom").all(me, me, me);
+  const out = { connectes: [], recues: [], envoyees: [] };
+  for (const r of rows) {
+    const d = { id: r.id, nom: r.nom, specialite: r.specialite, ville: r.ville, bio: r.bio.slice(0, 400), cabinet: r.cabinet, langues: r.langues,
+      experience: r.experience, disponible: r.disponible, has_photo: r.has_photo };
+    if (r.statut === "accepte") out.connectes.push({ ...d, etat: "connecte" });
+    else if (r.de_id === me) out.envoyees.push({ ...d, etat: "envoyee" });
+    else out.recues.push({ ...d, etat: "recue" });
+  }
+  res.json(out);
+});
+app.post("/api/confreres/:id/connect", needUser, needDoctor, rateLimit(40, 60e3), (req, res) => {
+  const me = req.user.id, t = approvedDoctor(req.params.id);
+  if (!t || t.id === me) return res.status(404).json({ detail: "Confrère introuvable." });
+  const l = linkBetween(me, t.id);
+  if (!l) {
+    db.prepare("INSERT INTO connexions(de_id,vers_id,statut,created_at) VALUES(?,?,'attente',?)").run(me, t.id, now());
+    return res.json({ etat: "envoyee" });
+  }
+  // il m'avait déjà écrit : la demande croisée vaut acceptation
+  if (l.statut === "attente" && l.de_id === t.id) {
+    db.prepare("UPDATE connexions SET statut='accepte' WHERE id=?").run(l.id);
+    return res.json({ etat: "connecte" });
+  }
+  res.json({ etat: linkState(l, me) });
+});
+app.post("/api/confreres/:id/accept", needUser, needDoctor, (req, res) => {
+  const r = db.prepare("UPDATE connexions SET statut='accepte' WHERE de_id=? AND vers_id=? AND statut='attente'").run(parseInt(req.params.id, 10), req.user.id);
+  if (!r.changes) return res.status(404).json({ detail: "Demande introuvable." });
+  res.json({ etat: "connecte" });
+});
+// annuler une demande envoyée, refuser une demande reçue ou retirer un confrère
+app.delete("/api/confreres/:id", needUser, needDoctor, (req, res) => {
+  const l = linkBetween(req.user.id, parseInt(req.params.id, 10));
+  if (l) db.prepare("DELETE FROM connexions WHERE id=?").run(l.id);
+  res.json({ etat: "aucune" });
+});
+app.post("/api/confreres/:id/conversation", needUser, needDoctor, (req, res) => {
+  const me = req.user.id, t = approvedDoctor(req.params.id);
+  if (!t || t.id === me) return res.status(404).json({ detail: "Confrère introuvable." });
+  const l = linkBetween(me, t.id);
+  if (!l || l.statut !== "accepte") return res.status(403).json({ detail: "Connectez-vous d'abord : votre confrère doit accepter votre demande." });
+  let c = db.prepare("SELECT id FROM conversations WHERE (patient_id=? AND doctor_id=?) OR (patient_id=? AND doctor_id=?)").get(me, t.id, t.id, me);
+  if (!c) {
+    const r = db.prepare("INSERT INTO conversations(patient_id,doctor_id,created_at) VALUES(?,?,?)").run(Math.min(me, t.id), Math.max(me, t.id), now());
+    c = { id: Number(r.lastInsertRowid) };
+  }
+  res.json({ id: c.id });
+});
+// entre deux médecins, on écrit et on appelle seulement si la connexion est acceptée
+function docPairBlocked(c) {
+  const a = db.prepare("SELECT role FROM users WHERE id=?").get(c.patient_id), b = db.prepare("SELECT role FROM users WHERE id=?").get(c.doctor_id);
+  if (!a || !b || a.role !== "medecin" || b.role !== "medecin") return false;
+  const l = linkBetween(c.patient_id, c.doctor_id);
+  return !l || l.statut !== "accepte";
+}
+
+// chiffres du tableau de bord
+app.get("/api/tableau", needUser, (req, res) => {
+  const u = req.user;
+  const n = (sql, ...a) => db.prepare(sql).get(...a).n;
+  const out = { non_lus: n("SELECT COUNT(*) n FROM messages m JOIN conversations c ON c.id=m.conv_id WHERE (c.patient_id=? OR c.doctor_id=?) AND m.from_id<>? AND m.lu=0", u.id, u.id, u.id) };
+  if (u.role === "medecin") {
+    out.consultations = n("SELECT COUNT(*) n FROM conversations c JOIN users p ON p.id=c.patient_id WHERE c.doctor_id=? AND p.role='patient'", u.id);
+    out.confreres = n("SELECT COUNT(*) n FROM connexions WHERE (de_id=? OR vers_id=?) AND statut='accepte'", u.id, u.id);
+    out.demandes = n("SELECT COUNT(*) n FROM connexions WHERE vers_id=? AND statut='attente'", u.id);
+  } else {
+    out.consultations = n("SELECT COUNT(*) n FROM conversations WHERE patient_id=?", u.id);
+  }
+  res.json(out);
 });
 
 // ---------- fiches : aperçu pour tous, détail pour Premium ----------
@@ -412,6 +541,7 @@ app.get("/api/conversations/:id/messages", needUser, (req, res) => {
 app.post("/api/conversations/:id/messages", needUser, needPremium, rateLimit(40, 60e3), (req, res) => {
   const c = convOf(req.params.id, req.user.id);
   if (!c) return res.sendStatus(404);
+  if (docPairBlocked(c)) return res.status(403).json({ detail: "Vous n'êtes plus connectés avec ce confrère." });
   const texte = clip((req.body || {}).texte, 2000);
   if (!texte) return res.status(422).json({ detail: "Message vide." });
   const r = db.prepare("INSERT INTO messages(conv_id,from_id,texte,ts) VALUES(?,?,?,?)").run(c.id, req.user.id, texte, now());
@@ -440,6 +570,7 @@ app.get("/api/rtc-config", needUser, (req, res) => {
 app.post("/api/conversations/:id/call", needUser, needPremium, rateLimit(12, 60e3), (req, res) => {
   const c = convOf(req.params.id, req.user.id);
   if (!c) return res.sendStatus(404);
+  if (docPairBlocked(c)) return res.status(403).json({ detail: "Vous n'êtes plus connectés avec ce confrère." });
   const live = liveCall(c.id);
   if (live) return res.json(callOut(live));
   const r = db.prepare("INSERT INTO calls(conv_id,started_by,state,room,created_ms,updated_ms) VALUES(?,?,'ringing',?,?,?)")
@@ -498,7 +629,8 @@ app.get("/api/inbox", needUser, (req, res) => {
       appels.push({ id: live.id, conv_id: c.id, de: other(cv, u.id).nom });
     }
   }
-  res.json({ non_lus, appels, premium: isPremium(u) });
+  const demandes = u.role === "medecin" ? db.prepare("SELECT COUNT(*) n FROM connexions WHERE vers_id=? AND statut='attente'").get(u.id).n : 0;
+  res.json({ non_lus, appels, demandes, premium: isPremium(u) });
 });
 
 // ---------- API admin ----------

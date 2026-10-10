@@ -21,3 +21,9 @@ Node.js 22.13+ (SQLite intégré), Express. Les messages ne sont lisibles que pa
 npm install
 SECRET_KEY=... ADMIN_PASSWORD=... COOKIE_SECURE=0 node server.js
 ```
+
+## Réseau des médecins (v3)
+- Annuaire des confrères (médecins validés uniquement) avec filtres spécialité, ville, disponibilité.
+- Demandes de connexion : envoyer, accepter, refuser, annuler, retirer. Message et appel vidéo entre confrères seulement après acceptation.
+- Profil médecin enrichi : cabinet ou hôpital, langues, années d'expérience.
+- Nouveau design : barre latérale, panneaux, tuiles d'actions, cartes de profil.

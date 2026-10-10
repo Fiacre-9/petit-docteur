@@ -1,7 +1,8 @@
 /* Petit Docteur : service worker. Rend l'app installable et garde l'écran de base hors ligne.
    Les appels /api ne sont jamais mis en cache (données de santé, sessions, paiements). */
-var CACHE = "pd-v1";
+var CACHE = "pd-v2";
 var SHELL = ["/", "/static/app.js", "/static/style.css", "/icon-192.png"];
+function keep(r, res) { if (res && res.ok) { var cp = res.clone(); caches.open(CACHE).then(function (c) { c.put(r, cp); }); } return res; }
 self.addEventListener("install", function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return Promise.all(SHELL.map(function (u) { return c.add(u).catch(function () {}); })); }).then(function () { return self.skipWaiting(); }));
 });
@@ -16,9 +17,14 @@ self.addEventListener("fetch", function (e) {
       .catch(function () { return caches.match("/").then(function (m) { return m || new Response("Hors ligne. Reconnectez-vous à Internet.", { status: 503, headers: { "Content-Type": "text/plain; charset=utf-8" } }); }); }));
     return;
   }
-  if (u.pathname.indexOf("/static/") === 0 || /\.(png|webmanifest)$/.test(u.pathname)) {
+  // code et styles : réseau d'abord (les mises à jour s'appliquent tout de suite), cache en secours hors ligne
+  if (u.pathname.indexOf("/static/") === 0) {
+    e.respondWith(fetch(r).then(function (res) { return keep(r, res); }).catch(function () { return caches.match(r); }));
+    return;
+  }
+  if (/\.(png|webmanifest)$/.test(u.pathname)) {
     e.respondWith(caches.match(r).then(function (m) {
-      var net = fetch(r).then(function (res) { if (res.ok) { var cp = res.clone(); caches.open(CACHE).then(function (c) { c.put(r, cp); }); } return res; }).catch(function () { return m; });
+      var net = fetch(r).then(function (res) { return keep(r, res); }).catch(function () { return m; });
       return m || net;
     }));
   }
