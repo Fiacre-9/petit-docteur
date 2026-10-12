@@ -266,6 +266,28 @@
     ["Suppression impossible, réessayez.", "Could not delete, please try again.", "Kolongola ekoki te, meka lisusu.", "Imeshindwa kufuta, jaribu tena.", "", ""],
     ["Erreur 500", "Error 500", "Libunga 500", "Hitilafu 500", "", ""],
     ["Paiement refusé", "Payment declined", "Kofuta eboyami", "Malipo yamekataliwa", "", ""],
+    // v5 : commissions, assistant virtuel
+    ["Mes commissions", "My commissions", "Mbongo na ngai ya consultation", "Kamisheni zangu", "", ""],
+    ["Commissions", "Commissions", "Commissions", "Kamisheni", "", ""],
+    ["{p} par patient abonné", "{p} per subscribed patient", "{p} mpo na mobeli moko oyo akoti abonnement", "{p} kwa kila mgonjwa aliyejiunga", "", ""],
+    ["Sur ce montant, {m} reviennent au médecin que vous contactez et {a} à la plateforme.", "Of this amount, {m} goes to the doctor you contact and {a} to the platform.", "Na mbongo oyo, {m} ekei epai ya monganga oyo ozali kobenga mpe {a} epai ya plateforme.", "Kati ya kiasi hiki, {m} huenda kwa daktari utakayemwasiliana naye na {a} kwa jukwaa.", "", ""],
+    ["Quand un patient s'abonne puis vous contacte, {p} vous reviennent pour la consultation.", "When a patient subscribes and then contacts you, {p} is yours for the consultation.", "Ntango mobeli akoti abonnement mpe abengi yo, {p} ezali na yo mpo na consultation.", "Mgonjwa akijiunga kisha akakuwasiliana, {p} ni zako kwa mashauriano.", "", ""],
+    ["À recevoir", "To receive", "Ya kozwa", "Ya kupokea", "", ""],
+    ["Déjà payé", "Already paid", "Efutami", "Imeshalipwa", "", ""],
+    ["Payée", "Paid", "Efutami", "Imelipwa", "", ""],
+    ["Total", "Total", "Nyonso", "Jumla", "", ""],
+    ["Aucune commission pour le moment.", "No commission yet.", "Commission moko te mpo na ntango oyo.", "Hakuna kamisheni kwa sasa.", "", ""],
+    ["Assistant virtuel", "Virtual assistant", "Mosungi ya virtuel", "Msaidizi pepe", "", ""],
+    ["Répond d'après le livre de Petit Docteur", "Answers from the Petit Docteur book", "Azongisaka engebene na buku ya Petit Docteur", "Hujibu kwa kutumia kitabu cha Petit Docteur", "", ""],
+    ["Informations tirées d'un livre. Elles ne remplacent pas un médecin. Urgence : allez aux urgences.", "Information taken from a book. It does not replace a doctor. Emergency: go to the emergency room.", "Boyebi euti na buku. Ekoki kosimba esika ya monganga te. Likama makasi : kende na urgences.", "Habari kutoka kitabuni. Haichukui nafasi ya daktari. Dharura: nenda kwenye huduma ya dharura.", "", ""],
+    ["Posez votre question…", "Ask your question…", "Senga motuna na yo…", "Uliza swali lako…", "", ""],
+    ["Votre question", "Your question", "Motuna na yo", "Swali lako", "", ""],
+    ["Fermer", "Close", "Kanga", "Funga", "", ""],
+    ["Bonjour, je suis l'Assistant virtuel de Petit Docteur. Posez-moi une question sur une maladie, ses causes, ses symptômes ou les remèdes du livre.", "Hello, I am the Petit Docteur virtual assistant. Ask me about an illness, its causes, its symptoms or the remedies in the book.", "Mbote, nazali Mosungi ya virtuel ya Petit Docteur. Senga ngai motuna na ntina ya maladi, bantina na yango, bilembo to nkisi ya buku.", "Habari, mimi ni Msaidizi pepe wa Petit Docteur. Niulize kuhusu ugonjwa, sababu, dalili au dawa za kitabuni.", "", ""],
+    ["L'assistant est indisponible pour le moment.", "The assistant is unavailable right now.", "Mosungi azali te mpo na ntango oyo.", "Msaidizi hapatikani kwa sasa.", "", ""],
+    ["L'assistant n'est pas encore activé.", "The assistant is not active yet.", "Mosungi asili te kosala.", "Msaidizi bado hajawashwa.", "", ""],
+    ["Écrivez votre question.", "Write your question.", "Koma motuna na yo.", "Andika swali lako.", "", ""],
+    ["Limite de questions atteinte pour aujourd'hui. Revenez demain ou consultez un médecin sur la plateforme.", "Question limit reached for today. Come back tomorrow or consult a doctor on the platform.", "Motuna esili mpo na lelo. Zonga lobi to senga monganga na plateforme.", "Kikomo cha maswali kimefikiwa leo. Rudi kesho au wasiliana na daktari kwenye jukwaa.", "", ""],
   ];
   var langs = ["en", "ln", "sw", "kg", "lua"], I = { en: {}, ln: {}, sw: {}, kg: {}, lua: {} };
   R.forEach(function (r) { langs.forEach(function (l, i) { if (r[i + 1]) I[l][r[0]] = r[i + 1]; }); });

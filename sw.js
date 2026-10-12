@@ -1,6 +1,6 @@
 /* Petit Docteur : service worker. Rend l'app installable et garde l'écran de base hors ligne.
    Les appels /api ne sont jamais mis en cache (données de santé, sessions, paiements). */
-var CACHE = "pd-v3";
+var CACHE = "pd-v5";
 var SHELL = ["/", "/static/app.js", "/static/i18n.js", "/static/style.css", "/icon-192.png"];
 function keep(r, res) { if (res && res.ok) { var cp = res.clone(); caches.open(CACHE).then(function (c) { c.put(r, cp); }); } return res; }
 self.addEventListener("install", function (e) {

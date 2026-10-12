@@ -1,7 +1,7 @@
 # Petit Docteur
 
 - `/` : fiches de santé. Sans compte : aperçu limité (les signes d'alerte restent toujours visibles). Liste des médecins visible, contact verrouillé.
-- Abonnés **Premium** (7 000 FC / 30 jours, payés par FlexPaie) : fiches complètes, profil avec photo, messages et appel vidéo avec les médecins.
+- Abonnés **Premium** (15 000 FC / 30 jours, payés par FlexPaie ; 7 000 FC reviennent au médecin contacté, 8 000 FC à la plateforme) : fiches complètes, profil avec photo, messages et appel vidéo avec les médecins.
 - `/medecin` : espace médecin (nom complet, spécialité, photo, présentation, disponibilité). Gratuit. Le numéro d'ordre est vérifié par l'administrateur avant que le médecin soit visible.
 - `/admin` : fiches (lecture de pages par Claude, validation par un médecin), médecins à approuver, abonnés et paiements, tâches, journal.
 
@@ -11,7 +11,8 @@ Node.js 22.13+ (SQLite intégré), Express. Les messages ne sont affichés qu'au
 - `SECRET_KEY` (32+), `ADMIN_PASSWORD` (10+), `ADMIN_USER`
 - `BASE_URL` : https://sante.mireb.online (adresses de retour FlexPaie)
 - `FLEXPAY_MERCHANT=MARCO_SERVICE`, `FLEXPAY_TOKEN` (Bearer fourni par FlexPaie)
-- `PREMIUM_PRICE` (7000), `PREMIUM_CURRENCY` (CDF)
+- `ABONNEMENT_PRIX` (15000), `PART_MEDECIN` (7000), `PREMIUM_CURRENCY` (CDF). L'ancienne variable `PREMIUM_PRICE` n'est plus lue : vous pouvez la supprimer.
+- `ASSISTANT_MAX_JOUR` (400) et `ASSISTANT_MAX_IP` (40) : limites quotidiennes du chat public
 - `ANTHROPIC_API_KEY` : lecture des pages par IA ; `WHATSAPP_NUMBER` (facultatif)
 - Appel vidéo : `TURN_URLS`, `TURN_USERNAME`, `TURN_CREDENTIAL` (serveur TURN conseillé pour les réseaux mobiles)
 - `DATA_DIR` : base et images (défaut `~/petit-docteur-data`)
@@ -36,3 +37,8 @@ SECRET_KEY=... ADMIN_PASSWORD=... COOKIE_SECURE=0 node server.js
 - **Paiement** affiché : M-Pesa, Orange Money, Airtel Money, Afrimoney, carte Visa (via FlexPaie).
 - **WhatsApp** : `WHATSAPP_NUMBER` (chiffres seulement, avec l'indicatif du pays, ex. 243…).
 - **Stores** : pages `/confidentialite`, `/conditions`, suppression de compte dans l'app (`/suppression`), `/.well-known/assetlinks.json` (variables `ANDROID_PACKAGE`, `ANDROID_SHA256`). Voir `PUBLIER-STORES.md`.
+
+## Version 5
+- **Abonnement 15 000 FC** : 7 000 FC attribués au médecin que le patient contacte après son paiement (la première conversation démarrée après le paiement), 8 000 FC pour la plateforme. Chaque médecin voit ses commissions dans « Mes commissions ». La console admin (onglet Abonnés) montre la répartition et permet de marquer les commissions payées. Le versement d'argent aux médecins se fait en dehors de l'application.
+- **Console admin, onglet Assistant** : jusqu'à 50 photos de pages du livre (envoi depuis la galerie, lien privé, lecture du texte par Claude, correction possible), instructions de l'assistant, logo.
+- **Assistant virtuel** (bulle de chat publique) : répond d'après les fiches validées et les pages mémorisées, sans diagnostic, avec renvoi vers un médecin ou les urgences.

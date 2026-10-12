@@ -8,7 +8,7 @@
 <button class="pri" id="go">Se connecter</button><p class="err" id="lge"></p></section>
 
 <div id="app" class="hide">
-<nav><button data-t="f" class="on">Fiches</button><button data-t="l">Lire une page</button><button data-t="e">Fiche</button><button data-t="d">Médecins</button><button data-t="a">Abonnés</button><button data-t="j">Tâches</button></nav>
+<nav><button data-t="f" class="on">Fiches</button><button data-t="l">Lire une page</button><button data-t="e">Fiche</button><button data-t="d">Médecins</button><button data-t="a">Abonnés</button><button data-t="m">Assistant</button><button data-t="j">Tâches</button></nav>
 <p class="err" id="er"></p>
 
 
@@ -34,8 +34,20 @@
 <p class="sub">Une fiche enregistrée ou modifiée repasse « à valider ».</p></div></section>
 
 <section id="d" class="hide"><p class="sub">Vérifiez le numéro d'ordre avant d'approuver. Seuls les médecins approuvés sont visibles et joignables.</p><div id="docs"></div></section>
-<section id="a" class="hide"><div class="card" id="abo"></div><div class="card"><h4 style="margin-top:0">Derniers paiements</h4><div id="pays"></div></div></section>
+<section id="a" class="hide"><div class="card" id="abo"></div><div class="card" id="com"></div><div class="card"><h4 style="margin-top:0">Derniers paiements</h4><div id="pays"></div></div></section>
 
+<section id="m" class="hide">
+<div class="card"><h4 style="margin-top:0">Logo de l'Assistant virtuel</h4>
+<p class="meta">Choisissez une vraie photo de médecin dont vous avez le droit de vous servir (votre photo, une photo achetée ou libre de droits, ou un médecin de la plateforme qui est d'accord). Sans photo, un dessin de médecin est affiché.</p>
+<div class="row" style="align-items:center"><img id="lg-img" alt="" style="width:84px;height:84px;border-radius:50%;object-fit:cover;flex:0 0 auto"><div><input type="file" id="lg-file" accept="image/*"><button id="lg-del" type="button">Remettre le dessin</button></div></div></div>
+<div class="card"><h4 style="margin-top:0">Instructions de l'assistant</h4>
+<p class="meta">Ce que l'assistant doit savoir ou faire, en plus du livre (ton, rappels, offres, numéro de contact…). Les règles de sécurité restent toujours prioritaires.</p>
+<textarea id="ins" rows="6" maxlength="4000" placeholder="Ex : Parle simplement. Pour acheter un remède, invite la personne à écrire à l'administrateur sur WhatsApp."></textarea>
+<div class="row"><button class="pri" id="ins-save" type="button" style="flex:0 0 auto">Enregistrer les instructions</button><span class="meta" id="ins-m"></span></div></div>
+<div class="card"><h4 style="margin-top:0">Mémoire : pages du livre (<span id="mn">0</span>/50)</h4>
+<p class="meta">Ajoutez jusqu'à 50 photos de pages depuis la galerie. Chaque photo reçoit un lien privé (visible seulement dans cette console) et Claude en lit le texte : l'assistant s'en sert tout de suite pour répondre.</p>
+<input type="file" id="mem-file" accept="image/*" multiple><p class="meta" id="mem-m"></p><div id="mem"></div></div>
+</section>
 <section id="j" class="hide"><div class="card"><h4 style="margin-top:0">Tâches du jour</h4><div id="tasks"></div>
 <div class="row"><input id="nt" placeholder="Nouvelle tâche" aria-label="Nouvelle tâche"><button id="at" style="flex:0 0 auto;height:44px;margin-top:4px">Ajouter</button></div></div>
 <div class="card"><h4 style="margin-top:0">Journal d'aujourd'hui</h4><div id="log"></div></div>
@@ -49,7 +61,7 @@ return r.json().catch(function(){return{}}).then(function(d){if(!r.ok)throw new 
 function jpost(p,m,b){return api(p,{method:m,headers:{"Content-Type":"application/json"},body:JSON.stringify(b)})}
 function err(e){$("er").textContent=e&&e.message||"";}
 function showLogin(){$("app").className="hide";$("lg").className="card"}
-function tab(t){["f","l","e","d","a","j"].forEach(function(s){$(s).className=s===t?"":"hide"});document.querySelectorAll("nav button").forEach(function(b){b.className=b.getAttribute("data-t")===t?"on":""});err();if(t==="j")loadT();if(t==="f")loadF();if(t==="d")loadD();if(t==="a")loadA()}
+function tab(t){["f","l","e","d","a","m","j"].forEach(function(s){$(s).className=s===t?"":"hide"});document.querySelectorAll("nav button").forEach(function(b){b.className=b.getAttribute("data-t")===t?"on":""});err();if(t==="j")loadT();if(t==="f")loadF();if(t==="d")loadD();if(t==="a")loadA();if(t==="m")loadM()}
 document.querySelector("nav").onclick=function(e){var t=e.target.getAttribute("data-t");if(t)tab(t)};
 $("go").onclick=function(){jpost("/api/login","POST",{user:$("u").value,password:$("pw").value}).then(function(){$("pw").value="";start()}).catch(function(e){$("lge").textContent=e.message})};
 $("out").onclick=function(){jpost("/api/logout","POST",{}).then(showLogin)};
@@ -97,8 +109,31 @@ return'<div class="card"><b>'+esc(d.nom)+'</b> <span class="b '+(d.statut==="app
 (d.has_photo?'<br><img class="pg" style="max-width:120px" alt="Photo" src="/api/admin/photo/'+d.id+'">':'')+
 '<div class="row"><button data-m="approuve" data-i="'+d.id+'">Approuver</button><button data-m="refuse" data-i="'+d.id+'">Refuser</button><button data-m="attente" data-i="'+d.id+'">Remettre en attente</button></div></div>'}).join(""):'<p class="sub">Aucun médecin inscrit.</p>'}).catch(err)}
 $("docs").onclick=function(e){var m=e.target.getAttribute("data-m");if(!m)return;jpost("/api/admin/medecins/"+e.target.getAttribute("data-i")+"/statut","POST",{statut:m}).then(loadD).catch(err)};
-function loadA(){api("/api/admin/abonnes").then(function(r){$("abo").innerHTML='<b>'+r.actifs+'</b> abonné(s) Premium actif(s) sur '+r.comptes+' compte(s) patient<br><span class="meta">'+r.paiements+' paiement(s) reçu(s) · '+r.total+' '+esc(r.devise)+'</span>';
+function loadA(){loadComm();api("/api/admin/abonnes").then(function(r){$("abo").innerHTML='<b>'+r.actifs+'</b> abonné(s) Premium actif(s) sur '+r.comptes+' compte(s) patient<br><span class="meta">'+r.paiements+' paiement(s) reçu(s) · '+r.total+' '+esc(r.devise)+'</span>';
 $("pays").innerHTML=r.derniers.length?r.derniers.map(function(p){return'<div class="log"><span class="meta">'+esc(new Date(p.created_ms).toLocaleString("fr-FR"))+'</span> '+esc(p.nom)+' · '+p.amount+' · '+esc(p.method)+' · <b>'+esc(p.status)+'</b></div>'}).join(""):'<p class="sub">Aucun paiement.</p>'}).catch(err)}
+
+function fmFC(n,d){return Number(n||0).toLocaleString("fr-FR")+" "+(d==="CDF"?"FC":d||"")}
+function loadComm(){api("/api/admin/commissions").then(function(r){var d=r.devise;
+$("com").innerHTML='<h4 style="margin-top:0">Répartition des abonnements</h4><p class="meta">Chaque abonnement de '+fmFC(r.prix,d)+' : '+fmFC(r.part_medecin,d)+' pour le médecin contacté, '+fmFC(r.part_admin,d)+' pour vous.</p>'+
+'<dl class="kv"><dt>Abonnements comptés</dt><dd>'+r.abonnements+'</dd><dt>Votre part</dt><dd><b>'+fmFC(r.ma_part,d)+'</b></dd><dt>Médecins à payer</dt><dd>'+fmFC(r.medecins_a_payer,d)+'</dd><dt>Médecins déjà payés</dt><dd>'+fmFC(r.medecins_payes,d)+'</dd><dt>En attente d\'un médecin contacté</dt><dd>'+fmFC(r.en_attente_de_medecin,d)+'</dd></dl>'+
+(r.par_medecin.length?'<h4>Par médecin</h4>'+r.par_medecin.map(function(m){return'<div class="log"><b>'+esc(m.nom||"(compte supprimé)")+'</b> · '+m.n+' abonné(s) · à payer <b>'+fmFC(m.a_payer,d)+'</b> · payé '+fmFC(m.paye,d)+(m.a_payer>0?' <button data-pay="'+m.id+'" type="button">Marquer payé</button>':'')+'</div>'}).join(""):'<p class="sub">Aucune commission attribuée pour le moment.</p>');
+}).catch(err)}
+$("com").onclick=function(e){var id=e.target.getAttribute("data-pay");if(!id)return;if(!confirm("Marquer toutes les commissions de ce médecin comme payées ? Faites-le seulement après lui avoir envoyé l'argent."))return;jpost("/api/admin/commissions/medecin/"+id+"/payer","POST",{}).then(loadComm).catch(err)};
+function loadM(){api("/api/admin/memoire").then(function(r){$("ins").value=r.instructions||"";$("mn").textContent=r.pages.length;$("lg-img").src="/api/assistant/logo?t="+Date.now();
+var lab={lu:"Lue",a_lire:"À lire",erreur:"Erreur"};
+$("mem").innerHTML=(r.claude?"":'<p class="err">La clé ANTHROPIC_API_KEY manque : les pages sont gardées mais pas encore lues.</p>')+(r.pages.length?r.pages.map(function(p){return'<div class="card"><div class="row" style="align-items:flex-start"><a href="'+p.lien+'" target="_blank" rel="noopener"><img alt="" loading="lazy" src="'+p.lien+'" style="width:84px;height:110px;object-fit:cover;border-radius:8px"></a><div style="flex:1;min-width:0"><b>'+esc(p.nom||("Page "+p.id))+'</b> <span class="b '+(p.statut==="lu"?"s":p.statut==="erreur"?"u":"p")+'">'+lab[p.statut]+'</span><br><span class="meta">'+p.caracteres+' caractères · <a href="'+p.lien+'" target="_blank" rel="noopener">lien de l\'image</a></span>'+(p.erreur?'<br><span class="err">'+esc(p.erreur)+'</span>':'')+(p.apercu?'<p class="meta">'+esc(p.apercu)+'…</p>':'')+
+'<div class="row"><button data-mr="'+p.id+'" type="button">Relire</button><button data-mt="'+p.id+'" type="button">Voir / corriger le texte</button><button data-md="'+p.id+'" type="button">Supprimer</button></div><div id="mt'+p.id+'"></div></div></div></div>'}).join(""):'<p class="sub">Aucune page pour le moment.</p>')}).catch(err)}
+$("mem").onclick=function(e){var a=e.target,id;if(id=a.getAttribute("data-mr")){a.disabled=true;jpost("/api/admin/memoire/"+id+"/relire","POST",{}).then(loadM).catch(function(x){err(x);a.disabled=false})}
+else if(id=a.getAttribute("data-md")){if(confirm("Supprimer cette page de la mémoire ?"))api("/api/admin/memoire/"+id,{method:"DELETE"}).then(loadM).catch(err)}
+else if(id=a.getAttribute("data-mt")){api("/api/admin/memoire/"+id+"/texte").then(function(p){$("mt"+id).innerHTML='<textarea id="tx'+id+'" rows="8">'+esc(p.texte)+'</textarea><div class="row"><button class="pri" data-ms="'+id+'" type="button" style="flex:0 0 auto">Enregistrer le texte</button></div>'}).catch(err)}
+else if(id=a.getAttribute("data-ms")){jpost("/api/admin/memoire/"+id+"/texte","PUT",{texte:$("tx"+id).value}).then(loadM).catch(err)}};
+$("mem-file").onchange=function(){var fs=[].slice.call($("mem-file").files),i=0,ok=0;if(!fs.length)return;err();
+(function next(){if(i>=fs.length){$("mem-m").textContent=ok+" page(s) ajoutée(s).";$("mem-file").value="";loadM();return}
+$("mem-m").textContent="Envoi et lecture de la page "+(i+1)+" sur "+fs.length+"… (environ 20 secondes par page)";var fd=new FormData();fd.append("file",fs[i]);fd.append("nom",fs[i].name);
+api("/api/admin/memoire/images",{method:"POST",body:fd}).then(function(){ok++;i++;next()}).catch(function(e){$("mem-m").textContent=ok+" page(s) ajoutée(s). Arrêt : "+e.message;$("mem-file").value="";loadM()})})()};
+$("ins-save").onclick=function(){jpost("/api/admin/assistant/instructions","PUT",{texte:$("ins").value}).then(function(){$("ins-m").textContent="Enregistré.";setTimeout(function(){$("ins-m").textContent=""},2500)}).catch(err)};
+$("lg-file").onchange=function(){var f=$("lg-file").files[0];if(!f)return;var fd=new FormData();fd.append("file",f);err();api("/api/admin/assistant/logo",{method:"POST",body:fd}).then(function(){$("lg-file").value="";$("lg-img").src="/api/assistant/logo?t="+Date.now()}).catch(err)};
+$("lg-del").onclick=function(){api("/api/admin/assistant/logo",{method:"DELETE"}).then(function(){$("lg-img").src="/api/assistant/logo?t="+Date.now()}).catch(err)};
 function loadT(){api("/api/admin/taches").then(function(l){$("tasks").innerHTML=l.map(function(t){return'<label style="display:flex;gap:8px;align-items:center;font-weight:400"><input type="checkbox" style="width:auto;margin:0" data-k="'+t.id+'"'+(t.fait?" checked":"")+'> '+esc(t.texte)+'</label>'}).join("")}).catch(err);
 api("/api/admin/journal").then(function(l){$("log").innerHTML=l.length?l.map(function(x){return'<div class="log"><span class="meta">'+esc(x.ts.slice(11,16))+'</span> '+esc(x.texte)+'</div>'}).join(""):'<p class="sub">Rien aujourd\'hui.</p>'}).catch(err)}
 $("tasks").onchange=function(e){var k=e.target.getAttribute("data-k");if(k)jpost("/api/admin/taches/"+k+"/fait","POST",{fait:e.target.checked}).then(loadT).catch(err)};

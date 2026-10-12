@@ -1,7 +1,7 @@
 "use strict";
 /* Petit Docteur : application (public, patients Premium, médecins et réseau de confrères). */
 var $ = function (i) { return document.getElementById(i); };
-var me = null, cfg = { cats: [], price: 7000, currency: "CDF", days: 30, paiement: false, whatsapp: "" };
+var me = null, cfg = { cats: [], price: 15000, part_medecin: 7000, part_admin: 8000, currency: "CDF", days: 30, paiement: false, whatsapp: "" };
 var fac = { specialites: [], villes: [], stats: {} };
 var RL = { s: "Faible", p: "Prudence", u: "Urgence" };
 var viewTimer = null, inboxTimer = null, shownCall = 0, fq = "", fcat = -1, searchTimer = null;
@@ -51,12 +51,12 @@ function applyLang() {
 function setLang(l) {
   lang = l;
   try { localStorage.setItem("pd_lang", l); } catch (e) { /* stockage indisponible */ }
-  applyLang(); route();
+  applyLang(); route(); if (window.astRebuild) astRebuild();
   if (me && pushOn) syncPush();
 }
 
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
-function money(n) { return Number(n).toLocaleString("fr-FR").replace(/[  ]/g, " ") + " " + (cfg.currency === "CDF" ? "FC" : cfg.currency); }
+function money(n) { return Number(n).toLocaleString("fr-FR").replace(/[\u202f\u00a0 ]/g, "\u00a0") + "\u00a0" + (cfg.currency === "CDF" ? "FC" : cfg.currency); }
 function api(p, o) {
   o = o || {}; o.credentials = "same-origin";
   return fetch(p, o).then(function (r) {
@@ -205,6 +205,7 @@ function route() {
   if (h === "#/demandes") return viewConfreres("demandes");
   if (h === "#/compte") return viewCompte();
   if (h === "#/premium") return viewPremium();
+  if (h === "#/commissions") return viewCommissions();
   if (h === "#/messages") return viewMessages();
   var m = h.match(/^#\/chat\/(\d+)$/);
   if (m) return viewChat(+m[1]);
@@ -283,6 +284,7 @@ function homeDoctor() {
     '<div class="actions"><a class="ab" href="#/messages"><span class="c">' + ic("chat") + "</span>Messages" + (unread ? '<span class="nbadge">' + unread + "</span>" : "") + "</a>" +
     '<a class="ab" href="#/confreres"><span class="c">' + ic("users") + "</span>Confrères</a>" +
     '<a class="ab" href="#/demandes"><span class="c">' + ic("userplus") + "</span>Demandes" + (pending ? '<span class="nbadge">' + pending + "</span>" : "") + "</a>" +
+    '<a class="ab" href="#/commissions"><span class="c">' + ic("card") + "</span>Commissions</a>" +
     '<a class="ab" href="#/compte"><span class="c">' + ic("user") + "</span>Profil</a></div>" +
     '<dl class="kv"><dt>Consultations</dt><dd id="k1">…</dd><dt>Confrères connectés</dt><dd id="k2">…</dd><dt>Demandes en attente</dt><dd id="k3">…</dd></dl></div>' +
     (ok ? '<h2 style="margin-top:16px">Activité récente</h2><div class="tl" id="act"></div>' : "") + "</section>" +
@@ -291,6 +293,7 @@ function homeDoctor() {
     tile("b", "users", "Trouver des confrères", "#/confreres", { off: !ok }) +
     tile("p", "userplus", "Demandes reçues", "#/demandes", { badge: pending || "", off: !ok }) +
     tile("g", "usercheck", "Mon réseau", "#/reseau", { off: !ok }) +
+    tile("y", "card", "Mes commissions", "#/commissions", { off: !ok, sub: t("{p} par patient abonné", { p: money(cfg.part_medecin) }) }) +
     tile("o", "user", "Compléter mon profil", "#/compte") + tile("y", "book", "Fiches santé", "#/fiches") + installTile() + "</div></section></div>" + pushBanner() + footer();
   if (ok) loadActivity("act", 4);
   api("/api/tableau").then(function (t) { if ($("k1")) { $("k1").textContent = t.consultations; $("k2").textContent = t.confreres; $("k3").textContent = t.demandes; } }).catch(function () {});
@@ -525,11 +528,25 @@ function viewDoctor() {
 }
 
 // ---------- paiement Premium ----------
+function viewCommissions() {
+  if (!isDoc()) { go("#/"); return; }
+  $("view").innerHTML = '<section class="panel"><h1>Mes commissions</h1><div class="inner"><p class="sub">' + t("Quand un patient s'abonne puis vous contacte, {p} vous reviennent pour la consultation.", { p: money(cfg.part_medecin) }) + '</p><div id="cm">…</div></div></section>' + footer();
+  api("/api/me/commissions").then(function (r) {
+    if (!$("cm")) return;
+        var fm = function (n) { return Number(n).toLocaleString("fr-FR").replace(/[\u202f\u00a0 ]/g, "\u00a0") + "\u00a0" + (r.devise === "CDF" ? "FC" : r.devise); };
+    var lab = { attribuee: "À recevoir", payee: "Payée" };
+    $("cm").innerHTML = '<dl class="kv"><dt>À recevoir</dt><dd>' + fm(r.a_payer) + "</dd><dt>Déjà payé</dt><dd>" + fm(r.payees) + "</dd><dt>Total</dt><dd><b>" + fm(r.total) + "</b></dd></dl>" +
+      (r.lignes.length ? '<div class="tl">' + r.lignes.map(function (l) {
+        return '<div class="tli"><span class="grow"><b>' + esc(l.patient) + '</b><span class="meta">' + esc(new Date(l.date).toLocaleDateString(lang === "en" ? "en-GB" : "fr-FR")) + "</span></span><span><b>" + fm(l.montant) + '</b><br><span class="b ' + (l.statut === "payee" ? "s" : "p") + '">' + T(lab[l.statut] || l.statut) + "</span></span></div>";
+      }).join("") + "</div>" : '<p class="sub">' + T("Aucune commission pour le moment.") + "</p>");
+    applyLang();
+  }).catch(function (e) { if ($("cm")) $("cm").textContent = e.message; });
+}
 function viewPremium() {
   if (!me) { go("#/compte"); return; }
   if (me.role === "medecin") { go("#/compte"); return; }
   var q = new URLSearchParams(location.search), ref = q.get("ref");
-  $("view").innerHTML = '<section class="panel"><h1>Passer Premium</h1><div class="split"><div class="inner prem"><p class="big">' + money(cfg.price) + ' <span class="sub">' + t("/ {n} jours", { n: cfg.days }) + '</span></p><ul class="ticks"><li>Fiches complètes : symptômes, remèdes, alertes</li><li>Message direct avec les médecins</li><li>Consultation vidéo</li><li>Profil avec photo</li></ul>' + payLine() + '</div>' +
+  $("view").innerHTML = '<section class="panel"><h1>Passer Premium</h1><div class="split"><div class="inner prem"><p class="big">' + money(cfg.price) + ' <span class="sub">' + t("/ {n} jours", { n: cfg.days }) + '</span></p><p class="sub">' + t("Sur ce montant, {m} reviennent au médecin que vous contactez et {a} à la plateforme.", { m: money(cfg.part_medecin), a: money(cfg.part_admin) }) + '</p><ul class="ticks"><li>Fiches complètes : symptômes, remèdes, alertes</li><li>Message direct avec les médecins</li><li>Consultation vidéo</li><li>Profil avec photo</li></ul>' + payLine() + '</div>' +
     (cfg.paiement ? '<div class="inner"><label>Moyen de paiement</label><div class="chips"><button id="m-mob" class="on">Mobile Money (M-Pesa, Orange, Airtel, Afrimoney)</button><button id="m-card">Carte bancaire (Visa)</button></div>' +
       '<div id="mobbox"><label for="pph">Numéro Mobile Money (M-Pesa, Orange Money, Airtel Money ou Afrimoney)</label><input id="pph" type="tel" value="' + esc(me.telephone) + '" placeholder="0812345678"></div>' +
       '<button class="pri" id="pay">' + t("Payer {p}", { p: money(cfg.price) }) + '</button><p id="paym" class="err"></p></div>' :
@@ -728,6 +745,63 @@ Promise.all([api("/api/config").then(function (c) { cfg = c; }).catch(function (
   route();
 });
 
+
+// ---------- Assistant virtuel (chat public fondé sur le livre) ----------
+var ast = { msgs: [], open: false, busy: false, info: null };
+function astBuild() {
+  if ($("ast-fab")) return;
+  var logo = "/api/assistant/logo?v=" + ((ast.info && ast.info.logo) || 0);
+  var fab = document.createElement("button");
+  fab.id = "ast-fab"; fab.type = "button"; fab.className = "ast-fab"; fab.setAttribute("aria-label", T("Assistant virtuel"));
+  fab.innerHTML = '<img alt="" src="' + logo + '"><span class="ast-lbl" translate="no">' + esc(T("Assistant virtuel")) + "</span>";
+  var box = document.createElement("section");
+  box.id = "ast"; box.className = "ast hide"; box.setAttribute("aria-label", T("Assistant virtuel"));
+  box.innerHTML = '<header><img alt="" src="' + logo + '"><div class="grow"><b>Assistant virtuel</b><small>Répond d\'après le livre de Petit Docteur</small></div><button type="button" id="ast-x" aria-label="Fermer">×</button></header>' +
+    '<div class="ast-msgs" id="ast-m" aria-live="polite"></div>' +
+    '<p class="ast-note">Informations tirées d\'un livre. Elles ne remplacent pas un médecin. Urgence : allez aux urgences.</p>' +
+    '<form id="ast-f"><input id="ast-q" maxlength="600" autocomplete="off" placeholder="Posez votre question…" aria-label="Votre question"><button class="pri" type="submit">Envoyer</button></form>';
+  document.body.appendChild(fab); document.body.appendChild(box);
+  fab.onclick = function () { astToggle(true); };
+  $("ast-x").onclick = function () { astToggle(false); };
+  $("ast-f").onsubmit = function (e) { e.preventDefault(); astSend(); };
+  $("ast-m").onclick = function (e) {
+    var f = e.target.getAttribute && e.target.getAttribute("data-fiche");
+    if (f) { fq = f; fcat = -1; astToggle(false); go("#/fiches"); }
+  };
+  astPaint();
+}
+function astToggle(on) {
+  ast.open = on; $("ast").className = "ast" + (on ? "" : " hide"); $("ast-fab").className = "ast-fab" + (on ? " hide" : "");
+  applyLang();
+  if (on) { astPaint(); $("ast-q").focus(); }
+}
+function astPaint() {
+  var m = $("ast-m"); if (!m) return;
+  var h = '<div class="bub you" translate="no">' + esc(T("Bonjour, je suis l'Assistant virtuel de Petit Docteur. Posez-moi une question sur une maladie, ses causes, ses symptômes ou les remèdes du livre.")) + "</div>";
+  ast.msgs.forEach(function (x) {
+    h += '<div class="bub ' + (x.role === "user" ? "me" : "you") + '" translate="no">' + esc(x.content).replace(/\n/g, "<br>") + "</div>";
+    if (x.fiches && x.fiches.length) h += '<div class="ast-ch">' + x.fiches.map(function (n) { return '<button type="button" class="chip" data-fiche="' + esc(n) + '">' + esc(n) + "</button>"; }).join("") + "</div>";
+  });
+  if (ast.busy) h += '<div class="bub you ast-wait">…</div>';
+  m.innerHTML = h; m.scrollTop = m.scrollHeight;
+}
+function astSend() {
+  var q = $("ast-q").value.trim();
+  if (!q || ast.busy) return;
+  $("ast-q").value = ""; ast.msgs.push({ role: "user", content: q }); ast.busy = true; astPaint();
+  jsend("/api/assistant", "POST", { messages: ast.msgs.map(function (x) { return { role: x.role, content: x.content }; }), lang: lang }).then(function (r) {
+    ast.msgs.push({ role: "assistant", content: r.reponse, fiches: r.fiches });
+  }).catch(function (e) {
+    ast.msgs.push({ role: "assistant", content: T(e.message || "L'assistant est indisponible pour le moment.") });
+  }).then(function () { ast.busy = false; astPaint(); });
+}
+function astRebuild() {
+  var was = ast.open;
+  ["ast-fab", "ast"].forEach(function (i) { if ($(i)) $(i).remove(); });
+  if (ast.info && ast.info.actif) { astBuild(); if (was) astToggle(true); }
+}
+window.astRebuild = astRebuild;
+api("/api/assistant/info").then(function (i) { ast.info = i; if (i.actif) astBuild(); }).catch(function () {});
 
 // ---------- application installable (PWA) ----------
 var installEvt = null;
