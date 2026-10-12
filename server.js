@@ -1000,6 +1000,7 @@ CREATE TABLE IF NOT EXISTS memoire_pages(id INTEGER PRIMARY KEY AUTOINCREMENT, f
   statut TEXT DEFAULT 'a_lire', erreur TEXT DEFAULT '', created_at TEXT);
 CREATE TABLE IF NOT EXISTS reglages(cle TEXT PRIMARY KEY, valeur TEXT);
 `);
+try { db.exec("ALTER TABLE memoire_pages ADD COLUMN envoye INTEGER DEFAULT 0"); } catch (e) { /* déjà présente */ }
 const getReg = (k) => { const r = db.prepare("SELECT valeur FROM reglages WHERE cle=?").get(k); return r ? r.valeur : ""; };
 const setReg = (k, v) => db.prepare("INSERT INTO reglages(cle,valeur) VALUES(?,?) ON CONFLICT(cle) DO UPDATE SET valeur=excluded.valeur").run(k, v);
 
@@ -1027,7 +1028,7 @@ async function lirePage(id) {
     return "erreur";
   }
 }
-const memLine = (p) => ({ id: p.id, nom: p.nom, statut: p.statut, erreur: p.erreur, caracteres: (p.texte || "").length,
+const memLine = (p) => ({ id: p.id, nom: p.nom, statut: p.statut, erreur: p.erreur, caracteres: (p.texte || "").length, envoye: p.envoye || 0,
   apercu: (p.texte || "").slice(0, 160), lien: "/api/admin/memoire/img/" + p.id, date: p.created_at });
 app.get("/api/admin/memoire", needAdmin, (req, res) => {
   res.json({ max: MEM_MAX, claude: !!process.env.ANTHROPIC_API_KEY, instructions: getReg("assistant_instructions"), logo: fs.existsSync(LOGO_FILE),
@@ -1070,6 +1071,29 @@ app.get("/api/admin/memoire/:id/texte", needAdmin, (req, res) => {
   const p = db.prepare("SELECT id,nom,texte FROM memoire_pages WHERE id=?").get(parseInt(req.params.id, 10));
   if (!p) return res.sendStatus(404);
   res.json(p);
+});
+// transforme le texte (corrigé) d'une page en fiches « à valider » : un médecin les relit ensuite dans l'onglet Fiches
+app.post("/api/admin/memoire/:id/envoyer", needAdmin, rateLimit(15, 60e3), async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const p = db.prepare("SELECT * FROM memoire_pages WHERE id=?").get(id);
+  if (!p) return res.sendStatus(404);
+  if (!(p.texte || "").trim()) return res.status(422).json({ detail: "Cette page n'a pas encore de texte. Cliquez d'abord sur « Relire » ou écrivez le texte." });
+  if (!process.env.ANTHROPIC_API_KEY) return res.status(503).json({ detail: "La clé ANTHROPIC_API_KEY n'est pas encore configurée sur le serveur." });
+  let fiches;
+  try {
+    const out = await claudeCall({ max_tokens: 3000, messages: [{ role: "user", content: PROMPT.replace("La photo montre une page.", "Voici le texte transcrit d'une page.") + "\n\nTEXTE DE LA PAGE :\n" + p.texte.slice(0, 12000) }] });
+    fiches = parseFiches(out);
+  } catch (e) { return res.status(502).json({ detail: "Transformation impossible pour le moment : " + String(e.message || e).slice(0, 120) }); }
+  const ajoutees = [], deja = [];
+  for (const f of fiches) {
+    if (db.prepare("SELECT 1 x FROM fiches WHERE lower(nom)=lower(?)").get(f.nom)) { deja.push(f.nom); continue; }
+    db.prepare("INSERT INTO fiches(nom,source,page,cat,risque,causes,symptomes,consequences,remedes,alerte,image,valide,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,0,?,?)")
+      .run(f.nom, "Petit Docteur", f.page, f.cat, f.risque, f.causes, f.symptomes, f.consequences, f.remedes, f.alerte, "", now(), now());
+    ajoutees.push(f.nom);
+  }
+  db.prepare("UPDATE memoire_pages SET envoye=envoye+? WHERE id=?").run(ajoutees.length, id);
+  log(`Page de la mémoire envoyée aux fiches : ${ajoutees.length} fiche(s) à valider`);
+  res.json({ ajoutees, deja });
 });
 app.delete("/api/admin/memoire/:id", needAdmin, (req, res) => {
   const id = parseInt(req.params.id, 10);
