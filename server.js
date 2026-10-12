@@ -1018,9 +1018,11 @@ async function lirePage(id) {
   if (!process.env.ANTHROPIC_API_KEY) { db.prepare("UPDATE memoire_pages SET statut='a_lire',erreur=? WHERE id=?").run("Clé ANTHROPIC_API_KEY absente : la page sera lue plus tard.", id); return "a_lire"; }
   try {
     const jpeg = fs.readFileSync(path.join(MEM_DIR, path.basename(p.fichier)));
+    const prev = db.prepare("SELECT texte FROM memoire_pages WHERE id<? AND statut='lu' AND texte<>'' ORDER BY id DESC LIMIT 1").get(id);
+    const ctx = prev ? "Contexte : la page précédente du livre se termine ainsi : « …" + prev.texte.trim().slice(-700) + " ». Si la page commence par la suite d'une rubrique déjà commencée, écris en tout début « (suite de : NOM DE LA RUBRIQUE) » puis transcris. " : "";
     const texte = await claudeCall({ max_tokens: 3500, messages: [{ role: "user", content: [
       { type: "image", source: { type: "base64", media_type: "image/jpeg", data: jpeg.toString("base64") } },
-      { type: "text", text: "Transcris fidèlement et complètement le texte de cette page d'un livre de médecine populaire (titres, causes, symptômes, conséquences, remèdes, quantités). N'invente rien et ne corrige pas le fond. Écris [illisible] pour un passage illisible. Réponds uniquement par le texte de la page." }] }] });
+      { type: "text", text: ctx + "Transcris fidèlement et complètement le texte de cette page d'un livre de médecine populaire (titres, causes, symptômes, conséquences, remèdes, quantités). N'invente rien et ne corrige pas le fond. Écris [illisible] pour un passage illisible. Si la page se termine au milieu d'une rubrique, écris à la fin « (la rubrique continue page suivante) ». Réponds uniquement par le texte de la page." }] }] });
     db.prepare("UPDATE memoire_pages SET texte=?,statut='lu',erreur='' WHERE id=?").run(texte.trim().slice(0, 20000), id);
     return "lu";
   } catch (e) {
@@ -1079,9 +1081,12 @@ app.post("/api/admin/memoire/:id/envoyer", needAdmin, rateLimit(15, 60e3), async
   if (!p) return res.sendStatus(404);
   if (!(p.texte || "").trim()) return res.status(422).json({ detail: "Cette page n'a pas encore de texte. Cliquez d'abord sur « Relire » ou écrivez le texte." });
   if (!process.env.ANTHROPIC_API_KEY) return res.status(503).json({ detail: "La clé ANTHROPIC_API_KEY n'est pas encore configurée sur le serveur." });
+  const pv = db.prepare("SELECT texte FROM memoire_pages WHERE id<? AND texte<>'' ORDER BY id DESC LIMIT 1").get(id);
+  const sv = db.prepare("SELECT texte FROM memoire_pages WHERE id>? AND texte<>'' ORDER BY id LIMIT 1").get(id);
+  const voisines = (pv ? "\n\nFIN DE LA PAGE PRÉCÉDENTE :\n…" + pv.texte.trim().slice(-1500) : "") + (sv ? "\n\nDÉBUT DE LA PAGE SUIVANTE :\n" + sv.texte.trim().slice(0, 1500) + "…" : "");
   let fiches;
   try {
-    const out = await claudeCall({ max_tokens: 3000, messages: [{ role: "user", content: PROMPT.replace("La photo montre une page.", "Voici le texte transcrit d'une page.") + "\n\nTEXTE DE LA PAGE :\n" + p.texte.slice(0, 12000) }] });
+    const out = await claudeCall({ max_tokens: 3000, messages: [{ role: "user", content: PROMPT.replace("La photo montre une page.", "Voici le texte transcrit d'une page, avec un extrait des pages voisines : une rubrique peut commencer sur la page précédente ou continuer sur la suivante. Fais UNE SEULE fiche complète par rubrique, en réunissant ses morceaux, mais ne crée pas de fiche pour une rubrique qui n'est pas sur la page principale.") + voisines + "\n\nTEXTE DE LA PAGE :\n" + p.texte.slice(0, 12000) }] });
     fiches = parseFiches(out);
   } catch (e) { return res.status(502).json({ detail: "Transformation impossible pour le moment : " + String(e.message || e).slice(0, 120) }); }
   const ajoutees = [], deja = [];
@@ -1147,13 +1152,15 @@ function contexteLivre(question) {
   const fiches = db.prepare("SELECT nom,causes,symptomes,consequences,remedes,alerte FROM fiches WHERE valide=1").all();
   const scored = fiches.map((f) => ({ f, s: scoreText(f.nom, qt, 3) + scoreText([f.causes, f.symptomes, f.consequences, f.remedes].join(" "), qt) }))
     .filter((x) => x.s > 0).sort((a, b) => b.s - a.s).slice(0, 5);
+  // le livre est lu comme un seul texte continu (dans l'ordre des pages) : une rubrique qui court sur plusieurs pages reste d'un seul tenant
   const chunks = [];
-  for (const p of db.prepare("SELECT id,nom,texte FROM memoire_pages WHERE statut='lu'").all())
-    for (let i = 0; i < p.texte.length; i += 1500) chunks.push({ nom: p.nom || "page " + p.id, t: p.texte.slice(i, i + 1800) });
+  const livre = db.prepare("SELECT id,nom,texte FROM memoire_pages WHERE statut='lu' ORDER BY id").all()
+    .map((p) => "[" + (p.nom || "page " + p.id) + "]\n" + p.texte.trim()).join("\n\n");
+  for (let i = 0; i < livre.length; i += 1500) chunks.push({ nom: "livre", t: livre.slice(Math.max(0, i - 300), i + 1800) });
   const pages = chunks.map((c) => ({ c, s: scoreText(c.t, qt) })).filter((x) => x.s > 0).sort((a, b) => b.s - a.s).slice(0, 4);
   let txt = "";
   for (const { f } of scored) txt += `\n[Fiche : ${f.nom}]\nCauses : ${f.causes || "—"}\nSymptômes : ${f.symptomes}\nConséquences : ${f.consequences || "—"}\nRemèdes du livre : ${f.remedes}\n${f.alerte ? "Signes d'alerte : " + f.alerte + "\n" : ""}`;
-  for (const { c } of pages) txt += `\n[Page du livre : ${c.nom}]\n${c.t}\n`;
+  for (const { c } of pages) txt += `\n[Extrait du livre, texte continu : une rubrique peut s'étendre sur plusieurs pages]\n${c.t}\n`;
   return { texte: txt.slice(0, 16000), fiches: scored.map((x) => x.f.nom), catalogue: fiches.map((f) => f.nom).slice(0, 80).join(", ") };
 }
 const assistJour = { d: "", n: 0, ips: new Map() };
