@@ -8,7 +8,7 @@
 <button class="pri" id="go">Se connecter</button><p class="err" id="lge"></p></section>
 
 <div id="app" class="hide">
-<nav><button data-t="f" class="on">Fiches</button><button data-t="l">Lire une page</button><button data-t="e">Fiche</button><button data-t="d">Médecins</button><button data-t="a">Abonnés</button><button data-t="m">Assistant</button><button data-t="j">Tâches</button></nav>
+<nav><button data-t="f" class="on">Fiches</button><button data-t="l">Lire une page</button><button data-t="e">Fiche</button><button data-t="d">Médecins</button><button data-t="a">Abonnés</button><button data-t="p">Pharmacie</button><button data-t="m">Assistant</button><button data-t="j">Tâches</button></nav>
 <p class="err" id="er"></p>
 
 
@@ -36,6 +36,26 @@
 <section id="d" class="hide"><p class="sub">Vérifiez le numéro d'ordre avant d'approuver. Seuls les médecins approuvés sont visibles et joignables.</p><div id="docs"></div></section>
 <section id="a" class="hide"><div class="card" id="abo"></div><div class="card" id="com"></div><div class="card"><h4 style="margin-top:0">Derniers paiements</h4><div id="pays"></div></div></section>
 
+<section id="p" class="hide">
+<div class="card"><h4 style="margin-top:0">Commandes de la pharmacie <span class="meta" id="pn"></span></h4>
+<p class="meta">Paiement à la livraison : le client paie en espèces au livreur. Passez la commande en « Livrée et payée » une fois l'argent encaissé.</p>
+<div class="chips" id="pflt"></div><div id="pcmd"></div></div>
+<div class="card"><h4 style="margin-top:0">Frais de livraison</h4>
+<div class="row"><input id="pfr" type="number" min="0" step="500" placeholder="0" aria-label="Frais de livraison en FC"><button class="pri" id="pfs" type="button" style="flex:0 0 auto;height:44px;margin-top:4px">Enregistrer</button></div>
+<p class="meta" id="pfm">Montant ajouté à chaque commande, en FC (0 = livraison offerte).</p></div>
+<div class="card"><h4 style="margin-top:0" id="pft">Ajouter un produit</h4>
+<input type="hidden" id="pid">
+<label for="pnm">Nom du produit</label><input id="pnm" maxlength="120">
+<div class="row"><div><label for="pct">Catégorie</label><input id="pct" maxlength="60" list="pcl" placeholder="Ex : Tisanes, Soins, Médicaments"><datalist id="pcl"></datalist></div><div><label for="ppx">Prix (FC)</label><input id="ppx" type="number" min="0" step="100"></div><div><label for="pst">Stock</label><input id="pst" type="number" min="0" step="1"></div></div>
+<label for="pds">Description</label><textarea id="pds" rows="2" maxlength="600"></textarea>
+<label for="pim">Photo du produit</label><input id="pim" type="file" accept="image/*">
+<label style="display:flex;gap:8px;align-items:center;font-weight:400"><input type="checkbox" id="por" style="width:auto;margin:0"> Vendu sur ordonnance (le client doit joindre la photo de l'ordonnance)</label>
+<label style="display:flex;gap:8px;align-items:center;font-weight:400"><input type="checkbox" id="pac" checked style="width:auto;margin:0"> Visible dans la boutique</label>
+<label id="prl" class="hide" style="display:flex;gap:8px;align-items:center;font-weight:400"><input type="checkbox" id="prm" style="width:auto;margin:0"> Retirer la photo actuelle</label>
+<div class="row"><button class="pri" id="psv" type="button" style="flex:0 0 auto">Enregistrer le produit</button><button id="pcl2" type="button" class="hide" style="flex:0 0 auto">Annuler la modification</button></div>
+<p class="meta" id="ppm"></p></div>
+<div class="card"><h4 style="margin-top:0">Produits (<span id="ppn">0</span>)</h4><div id="pprod"></div></div>
+</section>
 <section id="m" class="hide">
 <div class="card"><h4 style="margin-top:0">Logo de l'Assistant virtuel</h4>
 <p class="meta">Choisissez une vraie photo de médecin dont vous avez le droit de vous servir (votre photo, une photo achetée ou libre de droits, ou un médecin de la plateforme qui est d'accord). Sans photo, un dessin de médecin est affiché.</p>
@@ -61,7 +81,7 @@ return r.json().catch(function(){return{}}).then(function(d){if(!r.ok)throw new 
 function jpost(p,m,b){return api(p,{method:m,headers:{"Content-Type":"application/json"},body:JSON.stringify(b)})}
 function err(e){$("er").textContent=e&&e.message||"";}
 function showLogin(){$("app").className="hide";$("lg").className="card"}
-function tab(t){["f","l","e","d","a","m","j"].forEach(function(s){$(s).className=s===t?"":"hide"});document.querySelectorAll("nav button").forEach(function(b){b.className=b.getAttribute("data-t")===t?"on":""});err();if(t==="j")loadT();if(t==="f")loadF();if(t==="d")loadD();if(t==="a")loadA();if(t==="m")loadM()}
+function tab(t){["f","l","e","d","a","p","m","j"].forEach(function(s){$(s).className=s===t?"":"hide"});document.querySelectorAll("nav button").forEach(function(b){b.className=b.getAttribute("data-t")===t?"on":""});err();if(t==="j")loadT();if(t==="f")loadF();if(t==="d")loadD();if(t==="a")loadA();if(t==="m")loadM();if(t==="p")loadP()}
 document.querySelector("nav").onclick=function(e){var t=e.target.getAttribute("data-t");if(t)tab(t)};
 $("go").onclick=function(){jpost("/api/login","POST",{user:$("u").value,password:$("pw").value}).then(function(){$("pw").value="";start()}).catch(function(e){$("lge").textContent=e.message})};
 $("out").onclick=function(){jpost("/api/logout","POST",{}).then(showLogin)};
@@ -119,6 +139,29 @@ $("com").innerHTML='<h4 style="margin-top:0">Répartition des abonnements</h4><p
 (r.par_medecin.length?'<h4>Par médecin</h4>'+r.par_medecin.map(function(m){return'<div class="log"><b>'+esc(m.nom||"(compte supprimé)")+'</b> · '+m.n+' abonné(s) · à payer <b>'+fmFC(m.a_payer,d)+'</b> · payé '+fmFC(m.paye,d)+(m.a_payer>0?' <button data-pay="'+m.id+'" type="button">Marquer payé</button>':'')+'</div>'}).join(""):'<p class="sub">Aucune commission attribuée pour le moment.</p>');
 }).catch(err)}
 $("com").onclick=function(e){var id=e.target.getAttribute("data-pay");if(!id)return;if(!confirm("Marquer toutes les commissions de ce médecin comme payées ? Faites-le seulement après lui avoir envoyé l'argent."))return;jpost("/api/admin/commissions/medecin/"+id+"/payer","POST",{}).then(loadComm).catch(err)};
+
+var pfl="all",PRODS=[],PST={nouvelle:"Nouvelle",confirmee:"Confirmée",en_livraison:"En livraison",livree:"Livrée et payée",annulee:"Annulée"},PSC={nouvelle:"u",confirmee:"p",en_livraison:"p",livree:"s",annulee:"v"};
+function loadP(){loadPC();loadPP()}
+function loadPC(){api("/api/admin/pharmacie/commandes"+(pfl==="all"?"":"?statut="+pfl)).then(function(r){$("pn").textContent=r.nouvelles?"· "+r.nouvelles+" nouvelle(s)":"";
+$("pflt").innerHTML=[["all","Toutes"],["nouvelle","Nouvelles"],["confirmee","Confirmées"],["en_livraison","En livraison"],["livree","Livrées"],["annulee","Annulées"]].map(function(x){return'<button type="button" data-pf="'+x[0]+'" class="'+(pfl===x[0]?"on":"")+'">'+x[1]+'</button>'}).join("");
+$("pcmd").innerHTML=r.commandes.length?r.commandes.map(function(c){var nx={nouvelle:[["confirmee","Confirmer"]],confirmee:[["en_livraison","Envoyer en livraison"]],en_livraison:[["livree","Livrée et payée"]]}[c.statut]||[];
+return'<div class="card"><b>'+esc(c.ref)+'</b> <span class="b '+PSC[c.statut]+'">'+PST[c.statut]+'</span>'+(c.ordonnance?' <span class="b p">Ordonnance</span>':'')+'<br><span class="meta">'+esc(new Date(c.date).toLocaleString("fr-FR"))+' · '+esc(c.nom)+' · <a href="tel:'+esc(c.telephone)+'">'+esc(c.telephone)+'</a></span><br><span class="meta">'+esc(c.adresse)+(c.quartier?' · '+esc(c.quartier):'')+'</span>'+(c.note?'<br><span class="meta">Note : '+esc(c.note)+'</span>':'')+
+'<ul style="margin:8px 0 4px;padding-left:18px">'+c.lignes.map(function(l){return'<li>'+l.qte+' × '+esc(l.nom)+' <span class="meta">('+fmFC(l.prix*l.qte,"CDF")+')</span></li>'}).join("")+'</ul><span class="meta">Livraison : '+fmFC(c.frais,"CDF")+'</span> · <b>À encaisser : '+fmFC(c.total,"CDF")+'</b>'+
+(c.ordonnance?'<br><a href="/api/admin/pharmacie/ordonnance/'+c.id+'" target="_blank" rel="noopener">Voir la photo de l\'ordonnance</a>':'')+
+((nx.length||c.statut==="nouvelle"||c.statut==="confirmee"||c.statut==="en_livraison")?'<div class="row" style="flex-wrap:wrap">'+nx.map(function(a){return'<button class="pri" type="button" style="flex:0 0 auto" data-cs="'+c.id+'|'+a[0]+'">'+a[1]+'</button>'}).join("")+'<button type="button" data-cs="'+c.id+'|annulee">Annuler la commande</button></div>':'')+'</div>'}).join(""):'<p class="sub">Aucune commande.</p>'}).catch(err)}
+$("pcmd").onclick=function(e){var v=e.target.getAttribute("data-cs");if(!v)return;var a=v.split("|");if(a[1]==="annulee"&&!confirm("Annuler cette commande ? Les produits retournent en stock."))return;if(a[1]==="livree"&&!confirm("Confirmez-vous avoir encaissé le paiement à la livraison ?"))return;jpost("/api/admin/pharmacie/commandes/"+a[0]+"/statut","POST",{statut:a[1]}).then(function(){loadPC();loadPP()}).catch(err)};
+$("pflt").onclick=function(e){var f=e.target.getAttribute("data-pf");if(f){pfl=f;loadPC()}};
+function loadPP(){api("/api/admin/pharmacie/produits").then(function(r){PRODS=r.produits;$("pfr").value=r.frais;$("ppn").textContent=PRODS.length;
+var cats=[];PRODS.forEach(function(p){if(p.cat&&cats.indexOf(p.cat)<0)cats.push(p.cat)});$("pcl").innerHTML=cats.map(function(c){return'<option value="'+esc(c)+'">'}).join("");
+$("pprod").innerHTML=PRODS.length?PRODS.map(function(p){return'<div class="card"><div class="row" style="align-items:flex-start">'+(p.image?'<img alt="" loading="lazy" src="'+p.image+'" style="width:72px;height:72px;object-fit:cover;border-radius:10px;flex:0 0 auto">':'')+'<div style="flex:1;min-width:0"><b>'+esc(p.nom)+'</b> '+(p.actif?'':'<span class="b v">Masqué</span> ')+(p.ordonnance?'<span class="b p">Ordonnance</span> ':'')+(p.stock>0?'':'<span class="b u">Rupture</span>')+'<br><span class="meta">'+esc(p.cat||"Sans catégorie")+' · '+fmFC(p.prix,"CDF")+' · stock : '+p.stock+'</span>'+(p.description?'<br><span class="meta">'+esc(p.description)+'</span>':'')+
+'<div class="row"><button type="button" data-pe="'+p.id+'">Modifier</button><button type="button" data-pd="'+p.id+'">Supprimer</button></div></div></div></div>'}).join(""):'<p class="sub">Aucun produit pour le moment. Ajoutez le premier ci-dessus.</p>'}).catch(err)}
+function pReset(){$("pid").value="";["pnm","pct","ppx","pst","pds"].forEach(function(i){$(i).value=""});$("pim").value="";$("por").checked=false;$("pac").checked=true;$("prm").checked=false;$("prl").className="hide";$("pcl2").className="hide";$("pft").textContent="Ajouter un produit"}
+$("pcl2").onclick=pReset;
+$("pprod").onclick=function(e){var a=e.target,id;if(id=a.getAttribute("data-pe")){var p=PRODS.filter(function(x){return x.id==id})[0];$("pid").value=p.id;$("pnm").value=p.nom;$("pct").value=p.cat;$("ppx").value=p.prix;$("pst").value=p.stock;$("pds").value=p.description;$("por").checked=p.ordonnance;$("pac").checked=p.actif;$("pim").value="";$("prm").checked=false;$("prl").className=p.image?"":"hide";$("pcl2").className="";$("pft").textContent="Modifier le produit";$("pft").scrollIntoView({behavior:"smooth"})}
+else if(id=a.getAttribute("data-pd")){if(confirm("Supprimer ce produit ? Les anciennes commandes gardent son nom."))api("/api/admin/pharmacie/produits/"+id,{method:"DELETE"}).then(function(){pReset();loadPP()}).catch(err)}};
+$("psv").onclick=function(){var fd=new FormData(),id=$("pid").value;fd.append("nom",$("pnm").value);fd.append("cat",$("pct").value);fd.append("prix",$("ppx").value||"0");fd.append("stock",$("pst").value||"0");fd.append("description",$("pds").value);fd.append("ordonnance",$("por").checked?"1":"0");fd.append("actif",$("pac").checked?"1":"0");if($("prm").checked)fd.append("retirer_image","1");if($("pim").files[0])fd.append("image",$("pim").files[0]);
+err();$("psv").disabled=true;api(id?"/api/admin/pharmacie/produits/"+id:"/api/admin/pharmacie/produits",{method:id?"PUT":"POST",body:fd}).then(function(){$("ppm").textContent="Produit enregistré.";setTimeout(function(){$("ppm").textContent=""},2500);pReset();loadPP()}).catch(err).then(function(){$("psv").disabled=false})};
+$("pfs").onclick=function(){jpost("/api/admin/pharmacie/reglages","PUT",{frais:$("pfr").value||"0"}).then(function(){$("pfm").textContent="Frais de livraison enregistrés.";setTimeout(function(){$("pfm").textContent="Montant ajouté à chaque commande, en FC (0 = livraison offerte)."},2500)}).catch(err)};
 function loadM(){api("/api/admin/memoire").then(function(r){$("ins").value=r.instructions||"";$("mn").textContent=r.pages.length;$("lg-img").src="/api/assistant/logo?t="+Date.now();
 var lab={lu:"Lue",a_lire:"À lire",erreur:"Erreur"};
 $("mem").innerHTML=(r.claude?"":'<p class="err">La clé ANTHROPIC_API_KEY manque : les pages sont gardées mais pas encore lues.</p>')+(r.pages.length?r.pages.map(function(p){return'<div class="card"><div class="row" style="align-items:flex-start"><a href="'+p.lien+'" target="_blank" rel="noopener"><img alt="" loading="lazy" src="'+p.lien+'" style="width:84px;height:110px;object-fit:cover;border-radius:8px"></a><div style="flex:1;min-width:0"><b>'+esc(p.nom||("Page "+p.id))+'</b> <span class="b '+(p.statut==="lu"?"s":p.statut==="erreur"?"u":"p")+'">'+lab[p.statut]+'</span>'+(p.envoye?' <span class="b s">Envoyée : '+p.envoye+' fiche(s)</span>':'')+'<br><span class="meta">'+p.caracteres+' caractères · <a href="'+p.lien+'" target="_blank" rel="noopener">lien de l\'image</a></span>'+(p.erreur?'<br><span class="err">'+esc(p.erreur)+'</span>':'')+(p.apercu?'<p class="meta">'+esc(p.apercu)+'…</p>':'')+

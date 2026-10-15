@@ -98,6 +98,8 @@ var ICONS = {
   clock: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
   out: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',
   bell: '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>',
+  bag: '<path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/>',
+  plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
   search: '<circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>'
 };
 function ic(n, cls) { return '<svg class="ic ' + (cls || "") + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[n] + "</svg>"; }
@@ -173,10 +175,11 @@ function navItems() {
   var home = ["Accueil", "home", "#/", ["#/"]], fiches = ["Fiches", "book", "#/fiches", ["#/fiches"]];
   var docs = ["Médecins", "users", "#/medecins", ["#/medecins"]];
   var msgs = ["Messages", "chat", "#/messages", ["#/messages", "#/chat"], unread];
-  if (!me) return [home, fiches, docs, ["Connexion", "user", "#/compte", ["#/compte", "#/premium"]]];
+  var shop = ["Pharmacie", "bag", "#/pharmacie", ["#/pharmacie", "#/panier", "#/commandes"], cartCount()];
+  if (!me) return [home, fiches, docs, shop, ["Connexion", "user", "#/compte", ["#/compte", "#/premium"]]];
   if (isDocOk()) return [home, ["Confrères", "users", "#/confreres", ["#/confreres", "#/reseau", "#/demandes"], pending], msgs, fiches, ["Profil", "user", "#/compte", ["#/compte"]]];
   if (isDoc()) return [home, fiches, ["Profil", "user", "#/compte", ["#/compte"]]];
-  return [home, fiches, docs, msgs, ["Compte", "user", "#/compte", ["#/compte", "#/premium"]]];
+  return [home, fiches, shop, msgs, ["Compte", "user", "#/compte", ["#/compte", "#/premium"]]];
 }
 function nav() {
   var cur = location.hash || "#/";
@@ -206,6 +209,9 @@ function route() {
   if (h === "#/compte") return viewCompte();
   if (h === "#/premium") return viewPremium();
   if (h === "#/commissions") return viewCommissions();
+  if (h === "#/pharmacie") return viewPharmacie();
+  if (h === "#/panier") return viewPanier();
+  if (h === "#/commandes") return viewCommandes();
   if (h === "#/messages") return viewMessages();
   var m = h.match(/^#\/chat\/(\d+)$/);
   if (m) return viewChat(+m[1]);
@@ -245,7 +251,7 @@ function viewHome() {
     (st ? '<div class="stats">' + st + "</div>" : "") + payLine() + "</section>" +
     '<section class="panel"><h2>Que souhaitez-vous faire ?</h2><div class="tiles">' +
     tile("y", "book", "Chercher un mal", "#/fiches") + tile("b", "users", "Trouver un médecin", "#/medecins") +
-    tile("t", "video", "Consulter en ligne", "#/compte", { sub: "Message et vidéo" }) +
+    tile("t", "video", "Consulter en ligne", "#/compte", { sub: "Message et vidéo" }) + tile("g", "bag", "Pharmacie", "#/pharmacie", { sub: "Paiement à la livraison" }) +
     tile("p", "star", "Passer Premium", "#/premium", { sub: t("{p} / mois", { p: money(cfg.price) }) }) +
     tile("k", "brief", "Espace médecin", "/medecin", { sub: "Inscription gratuite" }) + waTile() + installTile() + "</div></section>" +
     '<section class="panel hide" id="hdocs"><div class="panel-h"><h2>Médecins à votre service</h2><a href="#/medecins">Voir tous</a></div><div class="tl" id="hlist"></div></section>' + noteUrgence() + footer();
@@ -268,7 +274,7 @@ function homePatient() {
     '<h2 style="margin-top:16px">Activité récente</h2><div class="tl" id="act"></div></section>' +
     '<section class="panel"><h2>Que souhaitez-vous faire ?</h2><div class="tiles">' +
     tile("y", "book", "Chercher un mal", "#/fiches") + tile("b", "users", "Trouver un médecin", "#/medecins") +
-    tile("t", "chat", "Mes messages", "#/messages", { badge: unread || "" }) +
+    tile("t", "chat", "Mes messages", "#/messages", { badge: unread || "" }) + tile("g", "bag", "Pharmacie", "#/pharmacie", { sub: "Paiement à la livraison" }) +
     tile("p", "star", me.premium ? "Prolonger Premium" : "Passer Premium", "#/premium", { sub: t("{p} / mois", { p: money(cfg.price) }) }) +
     tile("o", "user", "Mon profil", "#/compte") + waTile() + installTile() + "</div></section></div>" + pushBanner() + noteUrgence() + footer();
   loadActivity("act", 4);
@@ -577,6 +583,137 @@ function waitPayment(ref) {
     }).catch(function () {});
     if (n > 75) stopTimers();
   }, 4000);
+}
+
+// ---------- pharmacie : catalogue, panier, commandes (paiement à la livraison) ----------
+var cart = cartLoad(), phCat = "", phQ = "", phInfo = { frais: 0 };
+function cartLoad() { try { var c = JSON.parse(localStorage.getItem("pd_cart") || "{}"); return c && typeof c === "object" && !Array.isArray(c) ? c : {}; } catch (e) { return {}; } }
+function cartSave() { try { localStorage.setItem("pd_cart", JSON.stringify(cart)); } catch (e) { /* stockage indisponible */ } }
+function cartCount() { var n = 0; for (var k in cart) n += cart[k].q; return n; }
+function cartSub() { var s = 0; for (var k in cart) s += cart[k].q * cart[k].prix; return s; }
+function cartNeedsRx() { for (var k in cart) if (cart[k].rx) return true; return false; }
+function cartAdd(p) {
+  var c = cart[p.id], q = (c ? c.q : 0) + 1;
+  if (!p.dispo || q > Math.min(p.stock, 20)) return false;
+  cart[p.id] = { q: q, nom: p.nom, prix: p.prix, rx: p.ordonnance, stock: p.stock, image: p.image || "" };
+  cartSave(); return true;
+}
+function cartBar() {
+  var n = cartCount(); if (!$("phbar")) return;
+  $("phbar").innerHTML = n ? '<a class="cartbar" href="#/panier">' + ic("bag") + "<span>" + t("{n} article(s) · {p}", { n: n, p: money(cartSub()) }) + '</span><b>' + T("Voir le panier") + "</b></a>" : "";
+  nav();
+}
+function phStatut(s) { return { nouvelle: "Nouvelle", confirmee: "Confirmée", en_livraison: "En livraison", livree: "Livrée et payée", annulee: "Annulée" }[s] || s; }
+function phStatutCls(s) { return { nouvelle: "p", confirmee: "p", en_livraison: "p", livree: "s", annulee: "v" }[s] || "v"; }
+function viewPharmacie() {
+  $("view").innerHTML = '<section class="panel"><h1>Pharmacie</h1><p class="sub">Choisissez vos produits et recevez-les chez vous. <b>Vous payez à la livraison</b>, en espèces, au livreur.</p>' +
+    '<form id="phf" class="hsearch" role="search"><input id="phq" type="search" placeholder="Rechercher un produit" aria-label="Rechercher un produit" value="' + esc(phQ) + '"><button class="pri" type="submit">Chercher</button></form>' +
+    '<div class="chips" id="phc"></div><div class="pgrid" id="phl"></div>' +
+    '<p class="note">Les produits « Sur ordonnance » ne sont livrés qu\'avec la photo de l\'ordonnance. Ces produits ne remplacent pas l\'avis d\'un médecin.</p>' + footer() + '</section><div id="phbar"></div>';
+  $("phf").onsubmit = function (e) { e.preventDefault(); phQ = $("phq").value; phLoad(); };
+  $("phc").onclick = function (e) { var c = e.target.getAttribute("data-c"); if (c === null) return; phCat = c; phLoad(); };
+  $("phl").onclick = function (e) {
+    var b = e.target.closest ? e.target.closest("[data-add]") : null; if (!b) return;
+    var p = (phList || []).filter(function (x) { return x.id === +b.getAttribute("data-add"); })[0];
+    if (p && cartAdd(p)) { b.textContent = T("Ajouté ✓"); setTimeout(function () { if (b) b.textContent = T("Ajouter"); }, 900); cartBar(); }
+    else if (p) alert(T("Quantité maximale atteinte pour ce produit."));
+  };
+  phLoad(); cartBar();
+}
+var phList = [];
+function phLoad() {
+  api("/api/pharmacie/produits?cat=" + encodeURIComponent(phCat) + "&q=" + encodeURIComponent(phQ)).then(function (r) {
+    if (!$("phl")) return;
+    phList = r.produits; phInfo.frais = r.frais;
+    $("phc").innerHTML = r.cats.length ? '<button type="button" data-c="" class="' + (phCat === "" ? "on" : "") + '">' + T("Tout") + "</button>" + r.cats.map(function (c) { return '<button type="button" data-c="' + esc(c) + '" class="' + (phCat === c ? "on" : "") + '" translate="no">' + esc(c) + "</button>"; }).join("") : "";
+    $("phl").innerHTML = r.produits.length ? r.produits.map(function (p) {
+      return '<article class="prod"><div class="pimg">' + (p.image ? '<img alt="" loading="lazy" src="' + esc(p.image) + '">' : ic("bag")) + '</div><div class="pbody"><b translate="no">' + esc(p.nom) + "</b>" +
+        '<div>' + (p.ordonnance ? '<span class="b p">Sur ordonnance</span>' : "") + (!p.dispo ? '<span class="b u">Rupture de stock</span>' : p.stock <= 5 ? '<span class="b v">' + t("Plus que {n}", { n: p.stock }) + "</span>" : "") + "</div>" +
+        (p.description ? '<p class="sub" translate="no">' + esc(p.description) + "</p>" : "") +
+        '<div class="pfoot"><span class="pprice">' + money(p.prix) + "</span>" + (p.dispo ? '<button type="button" class="pri" data-add="' + p.id + '">' + T("Ajouter") + "</button>" : "") + "</div></div></article>";
+    }).join("") : emptyBox("bag", T("Aucun produit pour le moment."));
+  }).catch(function () { if ($("phl")) $("phl").innerHTML = emptyBox("bag", T("Impossible de charger la pharmacie. Réessayez.")); });
+}
+function viewPanier() {
+  var keys = Object.keys(cart);
+  if (!keys.length) { $("view").innerHTML = '<section class="panel"><h1>Mon panier</h1>' + emptyBox("bag", T("Votre panier est vide.")) + '<p style="text-align:center"><a class="btn pri" href="#/pharmacie">' + T("Voir la pharmacie") + "</a></p></section>"; return; }
+  // actualise prix, stock et disponibilité avant de commander
+  api("/api/pharmacie/produits").then(function (r) {
+    phInfo.frais = r.frais;
+    var by = {}; r.produits.forEach(function (p) { by[p.id] = p; });
+    var removed = [];
+    Object.keys(cart).forEach(function (k) {
+      var p = by[k];
+      if (!p || !p.dispo) { removed.push(cart[k].nom); delete cart[k]; return; }
+      cart[k].prix = p.prix; cart[k].stock = p.stock; cart[k].rx = p.ordonnance; cart[k].image = p.image || "";
+      if (cart[k].q > Math.min(p.stock, 20)) cart[k].q = Math.min(p.stock, 20);
+    });
+    cartSave(); drawPanier(removed);
+  }).catch(function () { drawPanier([]); });
+  nav();
+}
+function drawPanier(removed) {
+  var keys = Object.keys(cart);
+  if (!keys.length) { nav(); $("view").innerHTML = '<section class="panel"><h1>Mon panier</h1>' + (removed.length ? '<p class="note">' + T("Ces produits ne sont plus disponibles :") + " <span translate=\"no\">" + esc(removed.join(", ")) + "</span></p>" : "") + emptyBox("bag", T("Votre panier est vide.")) + '<p style="text-align:center"><a class="btn pri" href="#/pharmacie">' + T("Voir la pharmacie") + "</a></p></section>"; return; }
+  var sub = cartSub(), fr = phInfo.frais || 0, rx = cartNeedsRx(), canOrder = me && me.role === "patient";
+  var lines = keys.map(function (k) {
+    var c = cart[k];
+    return '<div class="cline"><div class="pimg sm">' + (c.image ? '<img alt="" src="' + esc(c.image) + '">' : ic("bag")) + '</div><div class="grow"><b translate="no">' + esc(c.nom) + "</b>" + (c.rx ? ' <span class="b p">Sur ordonnance</span>' : "") + '<div class="meta">' + money(c.prix) + '</div></div>' +
+      '<div class="qty"><button type="button" data-q="' + k + '|-1" aria-label="' + T("Retirer un") + '">−</button><span>' + c.q + '</span><button type="button" data-q="' + k + '|1" aria-label="' + T("Ajouter un") + '">+</button></div><b class="lt">' + money(c.q * c.prix) + "</b></div>";
+  }).join("");
+  var form = canOrder ? '<div class="inner"><h2>Livraison</h2>' +
+    '<label for="ph-tel">Téléphone</label><input id="ph-tel" type="tel" value="' + esc(me.telephone) + '" placeholder="0812345678">' +
+    '<label for="ph-adr">Adresse de livraison</label><input id="ph-adr" placeholder="Avenue, numéro, repère" maxlength="240" autocomplete="street-address">' +
+    '<label for="ph-qt">Quartier ou commune</label><input id="ph-qt" placeholder="Ex : Gombe, Limete, Ngaliema" maxlength="80">' +
+    '<label for="ph-note">Message pour le livreur (facultatif)</label><input id="ph-note" maxlength="400">' +
+    (rx ? '<label for="ph-rx">Photo de l\'ordonnance</label><input id="ph-rx" type="file" accept="image/*"><p class="sub">Un produit de votre panier est vendu sur ordonnance : la photo est obligatoire. Elle n\'est vue que par l\'administrateur.</p>' : "") +
+    '<p class="note ok-n">' + T("Paiement à la livraison : aucun paiement en ligne. Vous payez en espèces au livreur, à la réception de votre commande.") + '</p>' +
+    '<button class="pri" id="ph-go" type="button">' + t("Commander · {p} à payer à la livraison", { p: money(sub + fr) }) + '</button><p id="ph-m" class="err"></p></div>' :
+    '<div class="inner">' + (me ? '<p class="note">' + T("Les commandes sont réservées aux comptes patients.") + "</p>" : '<p class="note">' + T("Connectez-vous ou créez un compte patient pour commander. Vous payez seulement à la livraison.") + '</p><a class="btn pri" href="#/compte">' + T("Connexion ou inscription") + "</a>") + "</div>";
+  $("view").innerHTML = '<section class="panel"><h1>Mon panier</h1>' + (removed.length ? '<p class="note">' + T("Ces produits ne sont plus disponibles :") + ' <span translate="no">' + esc(removed.join(", ")) + "</span></p>" : "") +
+    '<div id="cl">' + lines + '</div><dl class="kv"><dt>Sous-total</dt><dd>' + money(sub) + "</dd><dt>Livraison</dt><dd>" + (fr ? money(fr) : T("Offerte")) + "</dd><dt><b>" + T("Total à payer à la livraison") + "</b></dt><dd><b>" + money(sub + fr) + "</b></dd></dl>" +
+    '<p><a href="#/pharmacie">' + T("← Continuer mes achats") + "</a></p></section>" + (canOrder || true ? '<section class="panel">' + form + "</section>" : "");
+  nav();
+  $("cl").onclick = function (e) {
+    var v = e.target.getAttribute("data-q"); if (!v) return; var a = v.split("|"), c = cart[a[0]]; if (!c) return;
+    var q = c.q + (+a[1]);
+    if (q < 1) delete cart[a[0]]; else if (q > Math.min(c.stock, 20)) { alert(T("Quantité maximale atteinte pour ce produit.")); return; } else c.q = q;
+    cartSave(); drawPanier([]);
+  };
+  if ($("ph-go")) $("ph-go").onclick = function () {
+    var fd = new FormData();
+    fd.append("items", JSON.stringify(Object.keys(cart).map(function (k) { return { id: +k, qte: cart[k].q }; })));
+    fd.append("telephone", $("ph-tel").value); fd.append("adresse", $("ph-adr").value); fd.append("quartier", $("ph-qt").value); fd.append("note", $("ph-note").value);
+    if (rx) { var f = $("ph-rx").files[0]; if (!f) { msg($("ph-m"), "Ajoutez la photo de l'ordonnance."); return; } fd.append("ordonnance", f); }
+    $("ph-go").disabled = true; msg($("ph-m"), "");
+    api("/api/pharmacie/commandes", { method: "POST", body: fd }).then(function (c) {
+      cart = {}; cartSave(); nav(); drawConfirmation(c);
+    }).catch(function (e) { $("ph-go").disabled = false; msg($("ph-m"), e.message); if (e.status === 409) setTimeout(viewPanier, 1800); });
+  };
+}
+function drawConfirmation(c) {
+  var wa = "Bonjour, je viens de passer la commande " + c.ref + " sur Petit Docteur (" + Number(c.total).toLocaleString("fr-FR") + " FC, paiement à la livraison).";
+  $("view").innerHTML = '<section class="panel"><div class="done">' + ic("bag") + "<h1>" + T("Commande envoyée") + '</h1><p class="big" translate="no">' + esc(c.ref) + "</p>" +
+    '<p class="sub">' + T("Gardez ce numéro. L'administrateur va confirmer votre commande et vous appeler au besoin.") + "</p>" +
+    '<dl class="kv"><dt>Total à payer à la livraison</dt><dd><b>' + money(c.total) + "</b></dd><dt>Adresse</dt><dd translate=\"no\">" + esc(c.adresse) + (c.quartier ? ", " + esc(c.quartier) : "") + "</dd></dl>" +
+    '<p class="note ok-n">' + T("Vous payez en espèces au livreur, à la réception.") + "</p>" +
+    '<div class="row2"><a class="btn pri" href="#/commandes">' + T("Suivre ma commande") + "</a>" + waButton(wa, T("Prévenir sur WhatsApp")) + "</div></div></section>";
+}
+function viewCommandes() {
+  if (!me) { go("#/compte"); return; }
+  $("view").innerHTML = '<section class="panel"><h1>Mes commandes</h1><div id="cmdl"><p class="sub">Chargement…</p></div><p><a href="#/pharmacie">' + T("Voir la pharmacie") + "</a></p></section>";
+  api("/api/pharmacie/commandes").then(function (l) {
+    $("cmdl").innerHTML = l.length ? l.map(function (c) {
+      return '<article class="inner"><b translate="no">' + esc(c.ref) + '</b> <span class="b ' + phStatutCls(c.statut) + '">' + T(phStatut(c.statut)) + '</span><div class="meta">' + esc(new Date(c.date).toLocaleString("fr-FR")) + "</div>" +
+        '<ul class="cl2">' + c.lignes.map(function (x) { return "<li><span translate=\"no\">" + x.qte + " × " + esc(x.nom) + "</span> <span class=\"meta\">" + money(x.prix * x.qte) + "</span></li>"; }).join("") + "</ul>" +
+        '<div class="meta">' + T("Livraison") + " : " + (c.frais ? money(c.frais) : T("Offerte")) + "</div><b>" + (c.statut === "livree" ? T("Payé à la livraison") : c.statut === "annulee" ? T("Commande annulée") : T("À payer à la livraison")) + " : " + money(c.total) + "</b>" +
+        (c.statut === "nouvelle" ? '<div class="pact"><button type="button" data-cx="' + c.id + '">' + T("Annuler la commande") + "</button></div>" : "") + "</article>";
+    }).join("") : emptyBox("bag", T("Vous n'avez pas encore de commande."));
+    $("cmdl").onclick = function (e) {
+      var id = e.target.getAttribute("data-cx"); if (!id || !confirm(T("Annuler cette commande ?"))) return;
+      jsend("/api/pharmacie/commandes/" + id + "/annuler", "POST").then(viewCommandes).catch(function (x) { alert(x.message); });
+    };
+  }).catch(function (e) { $("cmdl").innerHTML = '<p class="err">' + esc(e.message) + "</p>"; });
 }
 
 // ---------- messages ----------

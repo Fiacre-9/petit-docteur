@@ -262,6 +262,7 @@ app.get("/api/me", optUser, (req, res) => res.json(req.user ? publicUser(req.use
 // sauf les reçus de paiement, conservés sans lien avec un nom
 app.delete("/api/me", needUser, rateLimit(5, 10 * 60e3), (req, res) => {
   const u = req.user;
+  let ordFiles = [];
   if (!checkPassword(String((req.body || {}).password || ""), u.pass)) return res.status(403).json({ detail: "Mot de passe incorrect." });
   db.exec("BEGIN");
   try {
@@ -273,9 +274,13 @@ app.delete("/api/me", needUser, rateLimit(5, 10 * 60e3), (req, res) => {
     }
     db.prepare("DELETE FROM connexions WHERE de_id=? OR vers_id=?").run(u.id, u.id);
     db.prepare("DELETE FROM push_subs WHERE user_id=?").run(u.id);
+    // commandes pharmacie : on garde seulement les montants, sans identité, adresse ni ordonnance
+    ordFiles = db.prepare("SELECT ordonnance FROM ph_commandes WHERE user_id=? AND ordonnance<>''").all(u.id).map((r) => r.ordonnance);
+    db.prepare("UPDATE ph_commandes SET user_id=0,nom='Compte supprimé',telephone='',adresse='',quartier='',note='',ordonnance='' WHERE user_id=?").run(u.id);
     db.prepare("DELETE FROM users WHERE id=?").run(u.id);
     db.exec("COMMIT");
   } catch (e) { db.exec("ROLLBACK"); return res.status(500).json({ detail: "Suppression impossible, réessayez." }); }
+  for (const f of ordFiles) fs.rmSync(path.join(DATA_DIR, "ordonnances", path.basename(f)), { force: true });
   if (u.photo) fs.rmSync(path.join(AVATAR_DIR, path.basename(u.photo)), { force: true });
   log(`Compte supprimé à la demande de la personne : ${u.nom}`);
   res.clearCookie("pd_user");
@@ -465,7 +470,7 @@ app.get("/api/tableau", needUser, (req, res) => {
 
 // ---------- fiches : aperçu pour tous, détail pour Premium ----------
 app.get("/api/config", optUser, (req, res) => res.json({
-  cats: CATS, whatsapp: WHATSAPP, price: PREMIUM_PRICE, part_medecin: PART_MEDECIN, part_admin: PART_ADMIN, currency: PREMIUM_CURRENCY, days: PREMIUM_DAYS, paiement: flexpay.configured() }));
+  cats: CATS, whatsapp: WHATSAPP, price: PREMIUM_PRICE, part_medecin: PART_MEDECIN, part_admin: PART_ADMIN, currency: PREMIUM_CURRENCY, days: PREMIUM_DAYS, paiement: flexpay.configured(), pharmacie: true }));
 const cut = (s, n) => (s.length > n ? s.slice(0, n).replace(/\s+\S*$/, "") + "…" : s);
 app.get("/api/fiches", optUser, (req, res) => {
   const full = !!req.user && isPremium(req.user);
@@ -583,8 +588,8 @@ if (webpush) {
   webpush.setVapidDetails(BASE_URL || "https://sante.mireb.online", vapid.publicKey, vapid.privateKey);
 }
 const PUSH_T = {
-  fr: { msg: "Nouveau message de {n}", call: "Appel vidéo de {n}", req: "{n} souhaite se connecter avec vous", acc: "{n} a accepté votre demande", ok: "Votre compte médecin est validé" },
-  en: { msg: "New message from {n}", call: "Video call from {n}", req: "{n} wants to connect with you", acc: "{n} accepted your request", ok: "Your doctor account is approved" },
+  fr: { msg: "Nouveau message de {n}", call: "Appel vidéo de {n}", req: "{n} souhaite se connecter avec vous", acc: "{n} a accepté votre demande", ok: "Votre compte médecin est validé", cmd: "Votre commande {n} a changé de statut" },
+  en: { msg: "New message from {n}", call: "Video call from {n}", req: "{n} wants to connect with you", acc: "{n} accepted your request", ok: "Your doctor account is approved", cmd: "Your order {n} has a new status" },
   sw: { msg: "Ujumbe mpya kutoka kwa {n}", call: "Simu ya video kutoka kwa {n}", req: "{n} anataka kuunganishwa nawe", acc: "{n} amekubali ombi lako", ok: "Akaunti yako ya daktari imethibitishwa" },
   ln: { msg: "Nsango ya sika uta {n}", call: "Libiangi ya vidéo uta {n}", req: "{n} azali kolinga kosangana na yo", acc: "{n} andimi ebongiseli na yo", ok: "Kompte na yo ya monganga endimami" },
   kg: { msg: "Nsangu ya mpa ya {n}", call: "Kubikisa ya vidéo ya {n}", req: "{n} kezola kuyika ngeye", acc: "{n} kondimi ndombolo na nge", ok: "Kompte ya nge ya ngangu ya nganga kondimama" },
@@ -1259,4 +1264,192 @@ app.get("/static/:f", (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
+// ---------- pharmacie : catalogue, commandes, paiement à la livraison ----------
+const PH_DIR = path.join(DATA_DIR, "pharmacie");
+const ORD_DIR = path.join(DATA_DIR, "ordonnances");
+fs.mkdirSync(PH_DIR, { recursive: true });
+fs.mkdirSync(ORD_DIR, { recursive: true });
+db.exec(`
+CREATE TABLE IF NOT EXISTS ph_produits(id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT NOT NULL, cat TEXT DEFAULT '', description TEXT DEFAULT '',
+  prix INTEGER NOT NULL DEFAULT 0, stock INTEGER NOT NULL DEFAULT 0, ordonnance INTEGER DEFAULT 0, actif INTEGER DEFAULT 1, image TEXT DEFAULT '', created_at TEXT);
+CREATE TABLE IF NOT EXISTS ph_commandes(id INTEGER PRIMARY KEY AUTOINCREMENT, ref TEXT NOT NULL UNIQUE, user_id INTEGER NOT NULL, nom TEXT, telephone TEXT,
+  adresse TEXT, quartier TEXT, note TEXT DEFAULT '', sous_total INTEGER DEFAULT 0, frais INTEGER DEFAULT 0, total INTEGER DEFAULT 0,
+  statut TEXT DEFAULT 'nouvelle', ordonnance TEXT DEFAULT '', created_ms INTEGER, updated_ms INTEGER);
+CREATE TABLE IF NOT EXISTS ph_lignes(id INTEGER PRIMARY KEY AUTOINCREMENT, commande_id INTEGER NOT NULL, produit_id INTEGER, nom TEXT, prix INTEGER, qte INTEGER);
+`);
+const PH_STATUTS = ["nouvelle", "confirmee", "en_livraison", "livree", "annulee"];
+const PH_MAX_LIGNES = 30, PH_MAX_QTE = 20;
+const fraisLivraison = () => Math.max(0, parseInt(getReg("livraison_frais") || process.env.LIVRAISON_FRAIS || "0", 10) || 0);
+const phProd = (p) => ({ id: p.id, nom: p.nom, cat: p.cat, description: p.description, prix: p.prix, ordonnance: !!p.ordonnance,
+  dispo: p.stock > 0, stock: p.stock, image: p.image ? "/api/pharmacie/image/" + p.id : "" });
+async function phImage(buf, dir) {
+  if (!sharp) throw new Error("no sharp");
+  const jpeg = await sharp(buf).rotate().resize(1000, 1000, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 82 }).toBuffer();
+  const name = crypto.randomUUID().replace(/-/g, "") + ".jpg";
+  fs.writeFileSync(path.join(dir, name), jpeg);
+  return name;
+}
+const rmFile = (dir, f) => { if (f) try { fs.unlinkSync(path.join(dir, path.basename(f))); } catch (e) { /* déjà absent */ } };
+const phLignes = (id) => db.prepare("SELECT produit_id,nom,prix,qte FROM ph_lignes WHERE commande_id=?").all(id);
+const phCmd = (c) => ({ id: c.id, ref: c.ref, nom: c.nom, telephone: c.telephone, adresse: c.adresse, quartier: c.quartier, note: c.note,
+  sous_total: c.sous_total, frais: c.frais, total: c.total, statut: c.statut, ordonnance: !!c.ordonnance, date: c.created_ms, lignes: phLignes(c.id) });
+
+app.get("/api/pharmacie/produits", (req, res) => {
+  const q = clip(req.query.q, 80).toLowerCase(), cat = clip(req.query.cat, 60);
+  let rows = db.prepare("SELECT * FROM ph_produits WHERE actif=1 ORDER BY cat, nom").all();
+  if (cat) rows = rows.filter((p) => p.cat === cat);
+  if (q) rows = rows.filter((p) => (p.nom + " " + p.description + " " + p.cat).toLowerCase().includes(q));
+  const cats = [...new Set(db.prepare("SELECT cat FROM ph_produits WHERE actif=1 AND cat<>''").all().map((r) => r.cat))].sort();
+  res.json({ produits: rows.map(phProd), cats, frais: fraisLivraison(), devise: PREMIUM_CURRENCY });
+});
+app.get("/api/pharmacie/image/:id", (req, res) => {
+  const p = db.prepare("SELECT image FROM ph_produits WHERE id=? AND actif=1").get(parseInt(req.params.id, 10));
+  if (!p || !p.image) return res.sendStatus(404);
+  res.set("Cache-Control", "public, max-age=86400").type("image/jpeg").sendFile(path.join(PH_DIR, path.basename(p.image)));
+});
+
+app.post("/api/pharmacie/commandes", needUser, rateLimit(6, 10 * 60e3), (req, res) => {
+  if (req.user.role !== "patient") return res.status(403).json({ detail: "Les commandes sont réservées aux comptes patients." });
+  upload.single("ordonnance")(req, res, async (err) => {
+    if (err) return res.status(400).json({ detail: "Photo d'ordonnance trop lourde (15 Mo maximum)." });
+    const b = req.body || {};
+    const adresse = clip(b.adresse, 240), quartier = clip(b.quartier, 80), note = clip(b.note, 400);
+    const tel = normalizePhone(b.telephone || req.user.telephone);
+    if (adresse.length < 5) return res.status(400).json({ detail: "Indiquez votre adresse de livraison (avenue, numéro, repère)." });
+    if (!tel) return res.status(400).json({ detail: "Numéro de téléphone invalide. Exemple : 0812345678" });
+    let items;
+    try { items = JSON.parse(String(b.items || "[]")); } catch (e) { items = null; }
+    if (!Array.isArray(items) || !items.length || items.length > PH_MAX_LIGNES) return res.status(400).json({ detail: "Votre panier est vide." });
+    const wanted = new Map();
+    for (const it of items) {
+      const id = parseInt(it && it.id, 10), q = parseInt(it && it.qte, 10);
+      if (!id || !(q >= 1)) return res.status(400).json({ detail: "Panier invalide." });
+      wanted.set(id, Math.min(PH_MAX_QTE, (wanted.get(id) || 0) + q));
+    }
+    const lignes = [];
+    let needsRx = false;
+    for (const [id, q] of wanted) {
+      const p = db.prepare("SELECT * FROM ph_produits WHERE id=? AND actif=1").get(id);
+      if (!p) return res.status(409).json({ detail: "Un produit de votre panier n'est plus disponible. Mettez votre panier à jour." });
+      if (p.stock < q) return res.status(409).json({ detail: `Stock insuffisant pour « ${p.nom} » (reste ${p.stock}).` });
+      if (p.ordonnance) needsRx = true;
+      lignes.push({ p, q });
+    }
+    let rx = "";
+    if (needsRx) {
+      if (!req.file) return res.status(400).json({ detail: "Un produit de votre panier demande une ordonnance : ajoutez la photo de l'ordonnance." });
+      try { rx = await phImage(req.file.buffer, ORD_DIR); }
+      catch (e) { return res.status(400).json({ detail: "L'ordonnance n'est pas une image lisible. Reprenez la photo." }); }
+    }
+    const sous = lignes.reduce((s, l) => s + l.p.prix * l.q, 0), frais = fraisLivraison();
+    const ref = "CMD" + Date.now().toString(36).toUpperCase() + crypto.randomBytes(2).toString("hex").toUpperCase();
+    // revérifie le stock et enregistre d'un seul bloc
+    db.exec("BEGIN");
+    try {
+      for (const l of lignes) {
+        const r = db.prepare("UPDATE ph_produits SET stock=stock-? WHERE id=? AND stock>=?").run(l.q, l.p.id, l.q);
+        if (!r.changes) throw new Error("stock:" + l.p.nom);
+      }
+      const r = db.prepare("INSERT INTO ph_commandes(ref,user_id,nom,telephone,adresse,quartier,note,sous_total,frais,total,statut,ordonnance,created_ms,updated_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run(ref, req.user.id, req.user.nom, tel, adresse, quartier, note, sous, frais, sous + frais, "nouvelle", rx, Date.now(), Date.now());
+      for (const l of lignes) db.prepare("INSERT INTO ph_lignes(commande_id,produit_id,nom,prix,qte) VALUES(?,?,?,?,?)").run(Number(r.lastInsertRowid), l.p.id, l.p.nom, l.p.prix, l.q);
+      db.exec("COMMIT");
+    } catch (e) {
+      db.exec("ROLLBACK"); rmFile(ORD_DIR, rx);
+      return res.status(409).json({ detail: "Un produit vient de passer en rupture. Mettez votre panier à jour." });
+    }
+    log(`Commande pharmacie ${ref} : ${sous + frais} ${PREMIUM_CURRENCY}${rx ? " (avec ordonnance)" : ""}`);
+    res.json(phCmd(db.prepare("SELECT * FROM ph_commandes WHERE ref=?").get(ref)));
+  });
+});
+app.get("/api/pharmacie/commandes", needUser, (req, res) => {
+  res.json(db.prepare("SELECT * FROM ph_commandes WHERE user_id=? ORDER BY id DESC LIMIT 50").all(req.user.id).map(phCmd));
+});
+function phRestock(id) {
+  for (const l of phLignes(id)) if (l.produit_id) db.prepare("UPDATE ph_produits SET stock=stock+? WHERE id=?").run(l.qte, l.produit_id);
+}
+app.post("/api/pharmacie/commandes/:id/annuler", needUser, (req, res) => {
+  const c = db.prepare("SELECT * FROM ph_commandes WHERE id=? AND user_id=?").get(parseInt(req.params.id, 10), req.user.id);
+  if (!c) return res.sendStatus(404);
+  if (c.statut !== "nouvelle") return res.status(409).json({ detail: "Cette commande est déjà en préparation. Écrivez à l'administrateur pour l'annuler." });
+  db.prepare("UPDATE ph_commandes SET statut='annulee',updated_ms=? WHERE id=?").run(Date.now(), c.id);
+  phRestock(c.id);
+  res.json(phCmd(db.prepare("SELECT * FROM ph_commandes WHERE id=?").get(c.id)));
+});
+
+// ----- console admin -----
+app.get("/api/admin/pharmacie/produits", needAdmin, (req, res) =>
+  res.json({ produits: db.prepare("SELECT * FROM ph_produits ORDER BY actif DESC, cat, nom").all().map((p) => Object.assign(phProd(p), { actif: !!p.actif })), frais: fraisLivraison() }));
+function phBody(b) {
+  const prix = parseInt(b.prix, 10), stock = parseInt(b.stock, 10);
+  if (!clip(b.nom, 120)) return { err: "Le nom du produit est obligatoire." };
+  if (!(prix >= 0) || prix > 100000000) return { err: "Prix invalide." };
+  return { nom: clip(b.nom, 120), cat: clip(b.cat, 60), description: clip(b.description, 600), prix, stock: stock >= 0 ? stock : 0,
+    ordonnance: b.ordonnance === "1" || b.ordonnance === 1 || b.ordonnance === true || b.ordonnance === "true" ? 1 : 0,
+    actif: b.actif === "0" || b.actif === 0 || b.actif === false || b.actif === "false" ? 0 : 1 };
+}
+app.post("/api/admin/pharmacie/produits", needAdmin, (req, res) => {
+  upload.single("image")(req, res, async (err) => {
+    if (err) return res.status(400).json({ detail: "Image trop lourde (15 Mo maximum)." });
+    const f = phBody(req.body || {});
+    if (f.err) return res.status(422).json({ detail: f.err });
+    let img = "";
+    if (req.file) { try { img = await phImage(req.file.buffer, PH_DIR); } catch (e) { return res.status(400).json({ detail: "Cette image n'est pas lisible." }); } }
+    const r = db.prepare("INSERT INTO ph_produits(nom,cat,description,prix,stock,ordonnance,actif,image,created_at) VALUES(?,?,?,?,?,?,?,?,?)")
+      .run(f.nom, f.cat, f.description, f.prix, f.stock, f.ordonnance, f.actif, img, now());
+    res.json({ id: Number(r.lastInsertRowid) });
+  });
+});
+app.put("/api/admin/pharmacie/produits/:id", needAdmin, (req, res) => {
+  upload.single("image")(req, res, async (err) => {
+    if (err) return res.status(400).json({ detail: "Image trop lourde (15 Mo maximum)." });
+    const id = parseInt(req.params.id, 10), cur = db.prepare("SELECT * FROM ph_produits WHERE id=?").get(id);
+    if (!cur) return res.sendStatus(404);
+    const f = phBody(req.body || {});
+    if (f.err) return res.status(422).json({ detail: f.err });
+    let img = cur.image;
+    if (req.file) { try { img = await phImage(req.file.buffer, PH_DIR); rmFile(PH_DIR, cur.image); } catch (e) { return res.status(400).json({ detail: "Cette image n'est pas lisible." }); } }
+    else if ((req.body || {}).retirer_image === "1") { rmFile(PH_DIR, cur.image); img = ""; }
+    db.prepare("UPDATE ph_produits SET nom=?,cat=?,description=?,prix=?,stock=?,ordonnance=?,actif=?,image=? WHERE id=?")
+      .run(f.nom, f.cat, f.description, f.prix, f.stock, f.ordonnance, f.actif, img, id);
+    res.json({ ok: true });
+  });
+});
+app.delete("/api/admin/pharmacie/produits/:id", needAdmin, (req, res) => {
+  const id = parseInt(req.params.id, 10), cur = db.prepare("SELECT image FROM ph_produits WHERE id=?").get(id);
+  if (!cur) return res.sendStatus(404);
+  rmFile(PH_DIR, cur.image);
+  db.prepare("DELETE FROM ph_produits WHERE id=?").run(id);
+  res.json({ ok: true });
+});
+app.put("/api/admin/pharmacie/reglages", needAdmin, (req, res) => {
+  const f = parseInt((req.body || {}).frais, 10);
+  if (!(f >= 0) || f > 10000000) return res.status(400).json({ detail: "Montant invalide." });
+  setReg("livraison_frais", String(f));
+  res.json({ frais: f });
+});
+app.get("/api/admin/pharmacie/commandes", needAdmin, (req, res) => {
+  const st = clip(req.query.statut, 20);
+  const rows = st ? db.prepare("SELECT * FROM ph_commandes WHERE statut=? ORDER BY id DESC LIMIT 200").all(st) : db.prepare("SELECT * FROM ph_commandes ORDER BY id DESC LIMIT 200").all();
+  const n = db.prepare("SELECT COUNT(*) n FROM ph_commandes WHERE statut='nouvelle'").get().n;
+  res.json({ nouvelles: n, commandes: rows.map(phCmd) });
+});
+app.get("/api/admin/pharmacie/ordonnance/:id", needAdmin, (req, res) => {
+  const c = db.prepare("SELECT ordonnance FROM ph_commandes WHERE id=?").get(parseInt(req.params.id, 10));
+  if (!c || !c.ordonnance) return res.sendStatus(404);
+  res.set("Cache-Control", "private, no-store").type("image/jpeg").sendFile(path.join(ORD_DIR, path.basename(c.ordonnance)));
+});
+app.post("/api/admin/pharmacie/commandes/:id/statut", needAdmin, (req, res) => {
+  const id = parseInt(req.params.id, 10), st = String((req.body || {}).statut || "");
+  const c = db.prepare("SELECT * FROM ph_commandes WHERE id=?").get(id);
+  if (!c) return res.sendStatus(404);
+  if (!PH_STATUTS.includes(st)) return res.status(400).json({ detail: "Statut inconnu." });
+  if (c.statut === "annulee" || c.statut === "livree") return res.status(409).json({ detail: "Cette commande est terminée." });
+  db.prepare("UPDATE ph_commandes SET statut=?,updated_ms=? WHERE id=?").run(st, Date.now(), id);
+  if (st === "annulee") phRestock(id);
+  notify(c.user_id, "cmd", c.ref, "/#/commandes", st === "en_livraison");
+  log(`Commande ${c.ref} : ${st}`);
+  res.json(phCmd(db.prepare("SELECT * FROM ph_commandes WHERE id=?").get(id)));
+});
+
 app.listen(PORT, () => console.log("Petit Docteur sur le port " + PORT));
